@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.routes import auth
+from app.api.routes import auth, projects, health
 from app.core.config import settings
 
 # Create FastAPI application
@@ -20,14 +20,6 @@ app.add_middleware(
 )
 
 # Include routers
-app.include_router(auth.router, prefix="/api")
-
-@app.get("/")
-async def root():
-    """Root endpoint"""
-    return {"message": "Task Generator API", "version": "1.0.0"}
-
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    return {"status": "healthy"}
+app.include_router(health.router, tags=["health"])
+app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
+app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
