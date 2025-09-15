@@ -1,1 +1,41 @@
-# Python dependencies
+# FastAPI and web framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+
+# Database and ORM
+sqlalchemy==1.4.48
+psycopg2-binary==2.9.9
+alembic==1.13.0
+
+# Environment and configuration
+python-dotenv==1.0.0
+pydantic-settings==2.1.0
+
+# Authentication and security
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.3.0
+email-validator==2.1.0
+
+# AI and NLP
+langchain==0.0.350
+google-generativeai==0.3.2
+
+# Background tasks
+celery==5.3.4
+redis==5.0.1
+
+# File processing
+pypdf==3.17.1
+python-docx==1.1.0
+docx2txt==0.8
+
+# Testing
+pytest==7.4.3
+httpx==0.25.2
+
+# Supabase
+supabase==2.3.0
+
+# Other utilities
+requests==2.31.0
