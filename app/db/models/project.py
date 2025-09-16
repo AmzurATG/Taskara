@@ -15,12 +15,8 @@ class Project(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
-    # Relationships
+    # Relationships - using string references to avoid circular imports
     owner = relationship("User", back_populates="projects")
     files = relationship("File", back_populates="project")
     ai_jobs = relationship("AIJob", back_populates="project")
     work_items = relationship("WorkItem", back_populates="project")
-
-from app.db.models.file import File
-from app.db.models.ai_job import AIJob
-from app.db.models.work_item import WorkItem

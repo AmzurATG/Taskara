@@ -12,7 +12,7 @@ from app.db.models.user import User
 router = APIRouter()
 
 
-@router.post("/{project_id}/files", response_model=FileUploadResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/projects/{project_id}/files/upload", response_model=FileUploadResponse, status_code=status.HTTP_201_CREATED)
 async def upload_file(
     project_id: UUID,
     file: UploadFile = FastAPIFile(...),
@@ -28,7 +28,7 @@ async def upload_file(
     )
 
 
-@router.get("/{project_id}/files", response_model=List[File])
+@router.get("/projects/{project_id}/files", response_model=List[File])
 def get_project_files(
     project_id: UUID,
     db: Session = Depends(get_db),
@@ -62,3 +62,25 @@ def get_file(
         )
     
     return file
+
+
+@router.delete("/files/{file_id}")
+async def delete_file(
+    file_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Delete a file."""
+    success = FileService.delete_file(
+        db=db,
+        file_id=file_id,
+        user_id=current_user.id
+    )
+    
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found"
+        )
+    
+    return {"message": "File deleted successfully"}

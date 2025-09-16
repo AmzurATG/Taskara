@@ -12,6 +12,12 @@ class ItemType(enum.Enum):
     TASK = "task"
     SUBTASK = "subtask"
 
+class ItemPriority(enum.Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
 class ItemStatus(enum.Enum):
     AI_GENERATED = "ai_generated"
     IN_REVIEW = "in_review"
@@ -28,6 +34,9 @@ class WorkItem(Base):
     title = Column(Text, nullable=False)
     description = Column(Text, nullable=True)
     status = Column(Enum(ItemStatus), default=ItemStatus.AI_GENERATED, nullable=False)
+    priority = Column(Enum(ItemPriority), default=ItemPriority.MEDIUM, nullable=False)
+    acceptance_criteria = Column(Text, nullable=True)  # JSON string of criteria list
+    estimated_hours = Column(Integer, nullable=True)
     order_index = Column(Integer, nullable=False, default=0)  # for sorting
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

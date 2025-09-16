@@ -189,3 +189,35 @@ class FileService:
         FileService._verify_project_ownership(db, file.project_id, user_id)
         
         return file
+    
+    @staticmethod
+    def delete_file(db: Session, file_id: UUID, user_id: UUID) -> bool:
+        """Delete a file and its associated AI jobs."""
+        file = FileService.get_file(db, file_id, user_id)
+        
+        if not file:
+            return False
+        
+        try:
+            # Delete the physical file
+            if file.storage_path and os.path.exists(file.storage_path):
+                os.remove(file.storage_path)
+            
+            # Delete associated AI jobs (they should cascade due to foreign key constraints)
+            from app.db.models.ai_job import AIJob
+            ai_jobs = db.query(AIJob).filter(AIJob.file_id == file_id).all()
+            for job in ai_jobs:
+                db.delete(job)
+            
+            # Delete the file record
+            db.delete(file)
+            db.commit()
+            
+            return True
+            
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to delete file: {str(e)}"
+            )

@@ -9,7 +9,7 @@ import enum
 class JobStatus(enum.Enum):
     QUEUED = "queued"
     PROCESSING = "processing"
-    DONE = "done"
+    COMPLETED = "completed"  # Keep this for consistency
     FAILED = "failed"
 
 class AIJob(Base):

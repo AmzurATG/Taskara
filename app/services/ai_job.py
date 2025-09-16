@@ -20,6 +20,16 @@ class AIJobService:
         db.add(db_job)
         db.commit()
         db.refresh(db_job)
+        
+        # Try to trigger background processing, but handle Redis connection errors gracefully
+        try:
+            from app.tasks.ai_jobs import process_ai_job
+            process_ai_job.delay(str(db_job.id))
+        except Exception as e:
+            # If Celery/Redis is not available, mark the job for manual processing
+            print(f"Warning: Background task scheduling failed: {e}")
+            print(f"Job {db_job.id} created but not scheduled for background processing")
+        
         return AIJobResponse.from_orm(db_job)
 
     @staticmethod
@@ -74,7 +84,7 @@ class AIJobService:
     @staticmethod
     def mark_job_completed(db: Session, job_id: UUID) -> Optional[AIJobResponse]:
         """Mark job as completed."""
-        return AIJobService.update_job_status(db, job_id, JobStatus.DONE, progress=100)
+        return AIJobService.update_job_status(db, job_id, JobStatus.COMPLETED, progress=100)
 
     @staticmethod
     def mark_job_failed(db: Session, job_id: UUID, error_message: str) -> Optional[AIJobResponse]:

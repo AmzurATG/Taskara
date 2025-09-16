@@ -88,11 +88,11 @@ async def get_current_user(
         if email is None:
             raise credentials_exception
         
-        token_data = TokenData(email=email)
+        token_data = TokenData(user_id=email)
     except Exception:
         raise credentials_exception
     
-    user = AuthService.get_user_by_email(email=token_data.email, db=db)
+    user = AuthService.get_user_by_email(email=email, db=db)
     if user is None:
         raise credentials_exception
     

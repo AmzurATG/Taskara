@@ -13,13 +13,30 @@ sys.path.append(str(BASE_DIR))
 # Import your models
 from app.db.base import Base
 from app.core.config import settings
+from urllib.parse import quote_plus
+import os
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
 
+# Handle the database URL with special characters
+db_url = settings.database_url
+# Replace % with %% for configparser compatibility, but only in passwords
+if "@" in db_url and "%" in db_url:
+    parts = db_url.split("://", 1)
+    if len(parts) == 2:
+        scheme, rest = parts
+        if "@" in rest:
+            auth_part, host_db_part = rest.rsplit("@", 1)
+            if ":" in auth_part:
+                user, password = auth_part.split(":", 1)
+                # Double the % for configparser
+                escaped_password = password.replace("%", "%%")
+                db_url = f"{scheme}://{user}:{escaped_password}@{host_db_part}"
+
 # Set the sqlalchemy url from our settings
-config.set_main_option("sqlalchemy.url", settings.database_url)
+config.set_main_option("sqlalchemy.url", db_url)
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
