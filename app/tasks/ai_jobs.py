@@ -5,8 +5,14 @@ from sqlalchemy.orm import Session
 
 from app.core.celery_app import celery_app
 from app.db.session import SessionLocal
-from app.db.models.ai_job import AIJob, JobStatus
+
+# Import models in the correct order to avoid relationship issues
+from app.db.models.user import User
+from app.db.models.project import Project
 from app.db.models.file import File
+from app.db.models.work_item import WorkItem
+from app.db.models.ai_job import AIJob, JobStatus
+
 from app.services.ai import AIParser
 from app.services.work_item import WorkItemService
 from app.utils.pdf_utils import PDFExtractor

@@ -22,9 +22,9 @@ class Settings(BaseSettings):
     # AI Configuration
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
     
-    # Celery Configuration
-    celery_broker_url: str = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
-    celery_result_backend: str = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
+    # Celery Configuration  
+    celery_broker_url: str = os.getenv("CELERY_BROKER_URL", "redis://localhost:9095/0")
+    celery_result_backend: str = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:9095/0")
     
     # Supabase Configuration
     supabase_url: str = os.getenv("SUPABASE_URL", "")
