@@ -20,6 +20,7 @@ email-validator==2.1.0
 # AI and NLP
 langchain==0.0.350
 google-generativeai==0.3.2
+requests==2.31.0
 
 # Background tasks
 celery==5.3.4

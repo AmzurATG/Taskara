@@ -17,6 +17,6 @@ class Project(Base):
     
     # Relationships - using string references to avoid circular imports
     owner = relationship("User", back_populates="projects")
-    files = relationship("File", back_populates="project")
-    ai_jobs = relationship("AIJob", back_populates="project")
-    work_items = relationship("WorkItem", back_populates="project")
+    files = relationship("File", back_populates="project", cascade="all, delete-orphan")
+    ai_jobs = relationship("AIJob", back_populates="project", cascade="all, delete-orphan")
+    work_items = relationship("WorkItem", back_populates="project", cascade="all, delete-orphan")

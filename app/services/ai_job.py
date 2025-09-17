@@ -84,7 +84,7 @@ class AIJobService:
     @staticmethod
     def mark_job_completed(db: Session, job_id: UUID) -> Optional[AIJobResponse]:
         """Mark job as completed."""
-        return AIJobService.update_job_status(db, job_id, JobStatus.COMPLETED, progress=100)
+        return AIJobService.update_job_status(db, job_id, JobStatus.DONE, progress=100)
 
     @staticmethod
     def mark_job_failed(db: Session, job_id: UUID, error_message: str) -> Optional[AIJobResponse]:

@@ -126,7 +126,7 @@ def process_ai_job(self, job_id: str):
             return {"status": "failed", "error": str(e)}
         
         # Update job with completion
-        ai_job.status = JobStatus.COMPLETED
+        ai_job.status = JobStatus.DONE
         ai_job.progress = 100
         # Note: result field doesn't exist in current schema, so storing in error_message for now
         ai_job.error_message = f"COMPLETED: Created {len(work_items)} work items from {len(parsed_results)} sections"
@@ -135,7 +135,7 @@ def process_ai_job(self, job_id: str):
         logger.info(f"Successfully completed AI job {job_id}, created {len(work_items)} work items")
         
         return {
-            "status": "completed",
+            "status": "done",
             "job_id": job_id,
             "work_items_created": len(work_items),
             "parsed_sections": len(parsed_results)

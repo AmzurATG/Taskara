@@ -58,7 +58,7 @@ class ProjectService:
 
     @staticmethod
     def delete_project(db: Session, project_id: UUID, user_id: UUID) -> bool:
-        """Delete a project, ensuring it belongs to the user."""
+        """Delete a project and all related data, ensuring it belongs to the user."""
         project = db.query(Project).filter(
             Project.id == project_id,
             Project.owner_id == user_id
@@ -66,10 +66,37 @@ class ProjectService:
         
         if not project:
             return False
+        
+        try:
+            # Import here to avoid circular imports
+            from app.db.models.file import File
             
-        db.delete(project)
-        db.commit()
-        return True
+            # Delete physical files from storage before deleting project
+            # (Database cascade will handle the database records)
+            files = db.query(File).filter(File.project_id == project_id).all()
+            for file in files:
+                try:
+                    import os
+                    if file.storage_path and os.path.exists(file.storage_path):
+                        os.remove(file.storage_path)
+                except Exception as e:
+                    print(f"Warning: Could not delete physical file {file.storage_path}: {e}")
+            
+            # Delete the project - database cascade will automatically delete:
+            # - All work_items related to this project
+            # - All ai_jobs related to this project  
+            # - All files related to this project
+            db.delete(project)
+            
+            # Commit all changes
+            db.commit()
+            return True
+            
+        except Exception as e:
+            # Rollback on any error
+            db.rollback()
+            print(f"Error deleting project {project_id}: {e}")
+            return False
 
     @staticmethod
     def verify_project_ownership(db: Session, project_id: UUID, user_id: UUID) -> bool:

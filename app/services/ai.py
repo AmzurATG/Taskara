@@ -4,6 +4,8 @@ from typing import List, Dict, Any, Optional, Union
 from pydantic import BaseModel, Field, ValidationError
 import google.generativeai as genai
 from openai import OpenAI
+import requests
+import time
 from app.core.config import settings
 
 
@@ -19,20 +21,38 @@ class WorkItemCreate(BaseModel):
 
 
 class ParsedRequirements(BaseModel):
-    work_items: List[WorkItemCreate] = Field(..., min_items=1, description="List of parsed work items")
+    work_items: List[WorkItemCreate] = Field(..., description="List of parsed work items")
     summary: str = Field(..., min_length=50, max_length=500, description="Brief summary of requirements")
 
 
 class AIParser:
     def __init__(self):
+        # Gemini model configurations
+        self.gemini_models = [
+            "gemini-1.5-flash",
+            "gemini-2.0-flash-exp", 
+            "gemini-2.0-flash-thinking-exp-1219"
+        ]
+        
+        # OpenRouter model configurations (Better models for structured output)
+        self.openrouter_models = [
+            "anthropic/claude-3-haiku:beta",
+            "meta-llama/llama-3.2-3b-instruct:free",
+            "google/gemma-2-9b-it:free",
+            "mistralai/mistral-7b-instruct:free"
+        ]
+        
         # Initialize Gemini
         if settings.gemini_api_key:
             genai.configure(api_key=settings.gemini_api_key)
-            self.gemini_model = genai.GenerativeModel('gemini-1.5-pro')
+            self.gemini_available = True
         else:
-            self.gemini_model = None
+            self.gemini_available = False
         
-        # Initialize OpenAI as fallback
+        # Initialize OpenRouter
+        self.openrouter_available = bool(settings.openrouter_api_key)
+        
+        # Initialize OpenAI as final fallback
         self.openai_client = OpenAI(api_key=getattr(settings, 'openai_api_key', '')) if hasattr(settings, 'openai_api_key') else None
     
     def _create_system_prompt(self) -> str:
@@ -82,7 +102,7 @@ REQUIREMENTS TEXT:
 Parse this text into structured work items. Return ONLY valid JSON matching the ParsedRequirements schema. Do not include any explanatory text outside the JSON."""
 
     def _validate_and_clean_response(self, response_text: str) -> Dict[str, Any]:
-        """Validate and clean the LLM response."""
+        """Validate and clean the LLM response with robust parsing for various formats."""
         try:
             # Extract JSON from response (handle cases where LLM adds extra text)
             json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
@@ -94,37 +114,247 @@ Parse this text into structured work items. Return ONLY valid JSON matching the 
             # Parse JSON
             parsed_data = json.loads(json_str)
             
+            # Handle various response structures
+            if 'ParsedRequirements' in parsed_data:
+                if isinstance(parsed_data['ParsedRequirements'], list):
+                    # If it's a list, assume it's work_items and create proper structure
+                    parsed_data = {
+                        'work_items': self._normalize_work_items(parsed_data['ParsedRequirements']),
+                        'summary': 'AI-generated work items from requirements analysis'
+                    }
+                else:
+                    parsed_data = parsed_data['ParsedRequirements']
+            
+            # Handle separate epics, stories, tasks format
+            if 'epics' in parsed_data or 'stories' in parsed_data or 'tasks' in parsed_data:
+                merged_items = []
+                
+                # Merge epics
+                if 'epics' in parsed_data:
+                    for epic in parsed_data['epics']:
+                        epic['type'] = 'epic'
+                        merged_items.append(epic)
+                
+                # Merge stories  
+                if 'stories' in parsed_data:
+                    for story in parsed_data['stories']:
+                        story['type'] = 'story'
+                        merged_items.append(story)
+                
+                # Merge tasks
+                if 'tasks' in parsed_data:
+                    for task in parsed_data['tasks']:
+                        task['type'] = 'task'
+                        merged_items.append(task)
+                
+                # Merge subtasks
+                if 'subtasks' in parsed_data:
+                    for subtask in parsed_data['subtasks']:
+                        subtask['type'] = 'subtask'
+                        merged_items.append(subtask)
+                
+                parsed_data = {
+                    'work_items': merged_items,
+                    'summary': parsed_data.get('summary', 'AI-generated work items from requirements analysis')
+                }
+            
+            # Ensure we have the required structure
+            if 'work_items' not in parsed_data and 'workItems' not in parsed_data:
+                if isinstance(parsed_data, list):
+                    # If the whole response is a list, treat as work_items
+                    parsed_data = {
+                        'work_items': self._normalize_work_items(parsed_data),
+                        'summary': 'AI-generated work items from requirements analysis'
+                    }
+                else:
+                    raise ValueError("Response missing 'work_items' or 'workItems' field")
+            else:
+                # Handle both snake_case and camelCase
+                work_items_key = 'work_items' if 'work_items' in parsed_data else 'workItems'
+                parsed_data['work_items'] = self._normalize_work_items(parsed_data[work_items_key])
+                
+                # Remove the camelCase version if it exists
+                if 'workItems' in parsed_data and work_items_key == 'workItems':
+                    del parsed_data['workItems']
+            
+            if 'summary' not in parsed_data:
+                parsed_data['summary'] = 'AI-generated work items from requirements analysis'
+            
             # Validate with Pydantic
             validated_data = ParsedRequirements(**parsed_data)
+            
+            # Handle empty work_items list by creating a default item
+            if not validated_data.work_items:
+                default_item = WorkItemCreate(
+                    title="Requirements Analysis Needed",
+                    description="The AI was unable to extract specific work items from this document chunk. Manual review and breakdown is recommended.",
+                    type="task",
+                    priority="medium",
+                    acceptance_criteria=["Document has been manually reviewed", "Work items have been properly defined"]
+                )
+                validated_data.work_items = [default_item]
             
             return validated_data.dict()
         
         except (json.JSONDecodeError, ValidationError) as e:
+            # Log the problematic response for debugging
+            print(f"Failed to parse response: {response_text[:500]}...")
             raise ValueError(f"Invalid response format: {str(e)}")
 
+    def _normalize_work_items(self, work_items: List[Any]) -> List[Dict[str, Any]]:
+        """Normalize work items from various AI model response formats."""
+        normalized_items = []
+        
+        for item in work_items:
+            if isinstance(item, dict):
+                # Handle nested structures like {'Epic': {...}}, {'Story': {...}}
+                if len(item) == 1 and list(item.keys())[0] in ['Epic', 'Story', 'Task', 'Subtask']:
+                    item_type = list(item.keys())[0].lower()
+                    item_data = list(item.values())[0]
+                    
+                    normalized_item = {
+                        'title': item_data.get('title', ''),
+                        'description': item_data.get('description', ''),
+                        'type': item_type,
+                        'priority': item_data.get('priority', 'medium'),
+                        'acceptance_criteria': item_data.get('acceptanceCriteria', item_data.get('acceptance_criteria', [])),
+                        'estimated_hours': item_data.get('estimatedHours', item_data.get('estimated_hours')),
+                        'parent_reference': item_data.get('parentReference', item_data.get('parent_reference', item_data.get('parent')))
+                    }
+                    
+                # Handle direct format with all fields present
+                elif 'title' in item and 'description' in item and 'type' in item:
+                    normalized_item = {
+                        'title': item['title'],
+                        'description': item['description'],
+                        'type': item['type'],
+                        'priority': item.get('priority', 'medium'),
+                        'acceptance_criteria': item.get('acceptance_criteria', item.get('acceptanceCriteria', [])),
+                        'estimated_hours': item.get('estimated_hours', item.get('estimatedHours')),
+                        'parent_reference': item.get('parent_reference', item.get('parentReference', item.get('parent')))
+                    }
+                
+                # Handle partial structures - try to extract what we can
+                else:
+                    normalized_item = {
+                        'title': item.get('title', 'Untitled Work Item'),
+                        'description': item.get('description', 'No description provided'),
+                        'type': item.get('type', 'task'),
+                        'priority': item.get('priority', 'medium'),
+                        'acceptance_criteria': item.get('acceptance_criteria', item.get('acceptanceCriteria', [])),
+                        'estimated_hours': item.get('estimated_hours', item.get('estimatedHours')),
+                        'parent_reference': item.get('parent_reference', item.get('parentReference', item.get('parent')))
+                    }
+                
+                # Clean up None values and ensure proper types
+                if normalized_item['acceptance_criteria'] is None:
+                    normalized_item['acceptance_criteria'] = []
+                if not isinstance(normalized_item['acceptance_criteria'], list):
+                    normalized_item['acceptance_criteria'] = [str(normalized_item['acceptance_criteria'])]
+                
+                normalized_items.append(normalized_item)
+        
+        return normalized_items
+
+    def _is_quota_exceeded(self, error_message: str) -> bool:
+        """Check if the error indicates quota exceeded."""
+        quota_indicators = [
+            "quota exceeded",
+            "rate limit", 
+            "resource exhausted",
+            "insufficient quota",
+            "too many requests",
+            "429"
+        ]
+        error_lower = error_message.lower()
+        return any(indicator in error_lower for indicator in quota_indicators)
+
     def _call_gemini(self, user_prompt: str) -> str:
-        """Call Gemini API."""
-        if not self.gemini_model:
+        """Call Gemini API with model fallback."""
+        if not self.gemini_available:
             raise Exception("Gemini API not configured")
         
-        try:
-            # Create the full prompt
-            full_prompt = f"{self._create_system_prompt()}\n\n{user_prompt}"
-            
-            response = self.gemini_model.generate_content(
-                full_prompt,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.1,  # Low temperature for consistent output
-                    top_p=0.8,
-                    top_k=40,
-                    max_output_tokens=4000,
-                )
-            )
-            
-            return response.text
+        full_prompt = f"{self._create_system_prompt()}\n\n{user_prompt}"
         
-        except Exception as e:
-            raise Exception(f"Gemini API error: {str(e)}")
+        for model_name in self.gemini_models:
+            try:
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content(
+                    full_prompt,
+                    generation_config=genai.types.GenerationConfig(
+                        temperature=0.1,
+                        top_p=0.8,
+                        top_k=40,
+                        max_output_tokens=4000,
+                    )
+                )
+                return response.text
+                
+            except Exception as e:
+                error_str = str(e)
+                print(f"Gemini {model_name} failed: {error_str}")
+                
+                # If quota exceeded, try next model
+                if self._is_quota_exceeded(error_str):
+                    continue
+                else:
+                    # For other errors, also try next model but log differently
+                    print(f"Non-quota error with {model_name}, trying next model")
+                    continue
+        
+        # All Gemini models failed
+        raise Exception(f"All Gemini models failed")
+
+    def _call_openrouter(self, user_prompt: str) -> str:
+        """Call OpenRouter API with model fallback."""
+        if not self.openrouter_available:
+            raise Exception("OpenRouter API not configured")
+        
+        headers = {
+            "Authorization": f"Bearer {settings.openrouter_api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        for model_name in self.openrouter_models:
+            try:
+                payload = {
+                    "model": model_name,
+                    "messages": [
+                        {"role": "system", "content": self._create_system_prompt()},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    "temperature": 0.1,
+                    "max_tokens": 4000,
+                    "top_p": 0.8
+                }
+                
+                response = requests.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=60
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    response_text = result["choices"][0]["message"]["content"]
+                    print(f"OpenRouter {model_name} response preview: {response_text[:200]}...")
+                    return response_text
+                else:
+                    error_msg = f"OpenRouter {model_name} HTTP {response.status_code}: {response.text}"
+                    print(error_msg)
+                    
+                    # If quota/rate limit, try next model
+                    if response.status_code in [429, 403] or self._is_quota_exceeded(response.text):
+                        continue
+                    else:
+                        continue
+                        
+            except Exception as e:
+                print(f"OpenRouter {model_name} failed: {str(e)}")
+                continue
+        
+        raise Exception("All OpenRouter models failed")
 
     def _call_openai(self, user_prompt: str) -> str:
         """Call OpenAI API as fallback."""
@@ -149,30 +379,46 @@ Parse this text into structured work items. Return ONLY valid JSON matching the 
             raise Exception(f"OpenAI API error: {str(e)}")
 
     def parse_requirements_chunk(self, text_chunk: str, chunk_index: int = 0) -> Dict[str, Any]:
-        """Parse a chunk of requirements text into structured work items."""
+        """Parse a chunk of requirements text into structured work items with intelligent fallback."""
         if not text_chunk.strip():
             raise ValueError("Empty text chunk provided")
         
         user_prompt = self._create_user_prompt(text_chunk)
+        errors = []
         
-        # Try Gemini first
-        try:
-            if self.gemini_model:
+        # Try Gemini models first
+        if self.gemini_available:
+            try:
                 response = self._call_gemini(user_prompt)
                 return self._validate_and_clean_response(response)
-        except Exception as gemini_error:
-            print(f"Gemini failed for chunk {chunk_index}: {gemini_error}")
-            
-            # Fallback to OpenAI
-            try:
-                if self.openai_client:
-                    response = self._call_openai(user_prompt)
-                    return self._validate_and_clean_response(response)
-            except Exception as openai_error:
-                print(f"OpenAI fallback failed for chunk {chunk_index}: {openai_error}")
-                raise Exception(f"Both AI services failed. Gemini: {gemini_error}, OpenAI: {openai_error}")
+            except Exception as gemini_error:
+                error_msg = f"All Gemini models failed for chunk {chunk_index}: {gemini_error}"
+                print(error_msg)
+                errors.append(error_msg)
         
-        raise Exception("No AI service configured")
+        # Try OpenRouter models
+        if self.openrouter_available:
+            try:
+                response = self._call_openrouter(user_prompt)
+                return self._validate_and_clean_response(response)
+            except Exception as openrouter_error:
+                error_msg = f"All OpenRouter models failed for chunk {chunk_index}: {openrouter_error}"
+                print(error_msg)
+                errors.append(error_msg)
+        
+        # Final fallback to OpenAI
+        if self.openai_client:
+            try:
+                response = self._call_openai(user_prompt)
+                return self._validate_and_clean_response(response)
+            except Exception as openai_error:
+                error_msg = f"OpenAI fallback failed for chunk {chunk_index}: {openai_error}"
+                print(error_msg)
+                errors.append(error_msg)
+        
+        # All services failed
+        all_errors = "; ".join(errors)
+        raise Exception(f"All AI services failed for chunk {chunk_index}. Errors: {all_errors}")
 
     def chunk_text(self, text: str, max_chunk_size: int = 3000) -> List[str]:
         """Split text into manageable chunks for AI processing."""

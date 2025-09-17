@@ -39,7 +39,7 @@ def get_current_user(
         token = credentials.credentials
         
         # Decode JWT token
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
         user_id: str = payload.get("sub")
         
         if user_id is None:

@@ -9,7 +9,7 @@ import enum
 class JobStatus(enum.Enum):
     QUEUED = "queued"
     PROCESSING = "processing"
-    COMPLETED = "completed"  # Keep this for consistency
+    DONE = "done"  # Match database enum value
     FAILED = "failed"
 
 class AIJob(Base):
