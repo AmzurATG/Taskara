@@ -186,7 +186,7 @@ class WorkItemService:
         from app.db.models.project import Project
         project = db.query(Project).filter(
             Project.id == work_item_create.project_id,
-            Project.user_id == user_id
+            Project.owner_id == user_id
         ).first()
         
         if not project:
@@ -206,7 +206,7 @@ class WorkItemService:
             acceptance_criteria=work_item_create.acceptance_criteria,
             estimated_hours=work_item_create.estimated_hours,
             order_index=work_item_create.order_index,
-            status=ItemStatus.TODO
+            status=ItemStatus.AI_GENERATED
         )
         
         db.add(db_work_item)
@@ -225,7 +225,7 @@ class WorkItemService:
         
         work_item = db.query(WorkItem).join(Project).filter(
             WorkItem.id == work_item_id,
-            Project.user_id == user_id
+            Project.owner_id == user_id
         ).first()
         
         return work_item
@@ -252,6 +252,193 @@ class WorkItemService:
         db.commit()
         db.refresh(work_item)
         return work_item
+    
+    @staticmethod
+    def get_epics_by_project(db: Session, project_id: UUID, user_id: UUID) -> List[WorkItem]:
+        """Get all epics for a project."""
+        # Verify project ownership
+        from app.db.models.project import Project
+        project = db.query(Project).filter(
+            Project.id == project_id,
+            Project.owner_id == user_id
+        ).first()
+        
+        if not project:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Project not found"
+            )
+        
+        return db.query(WorkItem).filter(
+            WorkItem.project_id == project_id,
+            WorkItem.item_type == ItemType.EPIC,
+            WorkItem.parent_id == None  # Only root epics
+        ).order_by(WorkItem.order_index, WorkItem.created_at).all()
+    
+    @staticmethod
+    def get_user_stories_by_epic(db: Session, epic_id: UUID, user_id: UUID) -> List[WorkItem]:
+        """Get all user stories for an epic."""
+        # Verify epic exists and user has access
+        epic = WorkItemService.get_work_item_by_id(db, epic_id, user_id)
+        if not epic or epic.item_type != ItemType.EPIC:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Epic not found"
+            )
+        
+        return db.query(WorkItem).filter(
+            WorkItem.parent_id == epic_id,
+            WorkItem.item_type == ItemType.STORY
+        ).order_by(WorkItem.order_index, WorkItem.created_at).all()
+    
+    @staticmethod
+    def get_tasks_by_story(db: Session, story_id: UUID, user_id: UUID) -> List[WorkItem]:
+        """Get all tasks for a user story."""
+        # Verify story exists and user has access
+        story = WorkItemService.get_work_item_by_id(db, story_id, user_id)
+        if not story or story.item_type != ItemType.STORY:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User story not found"
+            )
+        
+        return db.query(WorkItem).filter(
+            WorkItem.parent_id == story_id,
+            WorkItem.item_type == ItemType.TASK
+        ).order_by(WorkItem.order_index, WorkItem.created_at).all()
+    
+    @staticmethod
+    def get_epics_with_stats(db: Session, project_id: UUID, user_id: UUID) -> List[Dict[str, Any]]:
+        """Get all epics for a project with user stories count."""
+        # Verify project ownership
+        from app.db.models.project import Project
+        project = db.query(Project).filter(
+            Project.id == project_id,
+            Project.owner_id == user_id
+        ).first()
+        
+        if not project:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Project not found"
+            )
+        
+        epics = db.query(WorkItem).filter(
+            WorkItem.project_id == project_id,
+            WorkItem.item_type == ItemType.EPIC,
+            WorkItem.parent_id == None
+        ).order_by(WorkItem.order_index, WorkItem.created_at).all()
+        
+        epics_data = []
+        for epic in epics:
+            user_stories_count = db.query(WorkItem).filter(
+                WorkItem.parent_id == epic.id,
+                WorkItem.item_type == ItemType.STORY
+            ).count()
+            
+            epic_data = {
+                "id": str(epic.id),
+                "title": epic.title,
+                "description": epic.description,
+                "status": epic.status.value,
+                "priority": epic.priority.value,
+                "estimated_hours": epic.estimated_hours,
+                "created_at": epic.created_at.isoformat(),
+                "user_stories_count": user_stories_count
+            }
+            epics_data.append(epic_data)
+        
+        return epics_data
+    
+    @staticmethod
+    def get_user_stories_with_stats(db: Session, epic_id: UUID, user_id: UUID) -> List[Dict[str, Any]]:
+        """Get all user stories for an epic with tasks count."""
+        # Verify epic exists and user has access
+        epic = WorkItemService.get_work_item_by_id(db, epic_id, user_id)
+        if not epic or epic.item_type != ItemType.EPIC:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Epic not found"
+            )
+        
+        user_stories = db.query(WorkItem).filter(
+            WorkItem.parent_id == epic_id,
+            WorkItem.item_type == ItemType.STORY
+        ).order_by(WorkItem.order_index, WorkItem.created_at).all()
+        
+        stories_data = []
+        for story in user_stories:
+            tasks_count = db.query(WorkItem).filter(
+                WorkItem.parent_id == story.id,
+                WorkItem.item_type == ItemType.TASK
+            ).count()
+            
+            story_data = {
+                "id": str(story.id),
+                "title": story.title,
+                "description": story.description,
+                "status": story.status.value,
+                "priority": story.priority.value,
+                "estimated_hours": story.estimated_hours,
+                "created_at": story.created_at.isoformat(),
+                "tasks_count": tasks_count
+            }
+            stories_data.append(story_data)
+        
+        return stories_data
+    
+    @staticmethod
+    def get_tasks_with_stats(db: Session, story_id: UUID, user_id: UUID) -> List[Dict[str, Any]]:
+        """Get all tasks for a user story with subtasks count."""
+        # Verify story exists and user has access
+        story = WorkItemService.get_work_item_by_id(db, story_id, user_id)
+        if not story or story.item_type != ItemType.STORY:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User story not found"
+            )
+        
+        tasks = db.query(WorkItem).filter(
+            WorkItem.parent_id == story_id,
+            WorkItem.item_type == ItemType.TASK
+        ).order_by(WorkItem.order_index, WorkItem.created_at).all()
+        
+        tasks_data = []
+        for task in tasks:
+            subtasks_count = db.query(WorkItem).filter(
+                WorkItem.parent_id == task.id,
+                WorkItem.item_type == ItemType.SUBTASK
+            ).count()
+            
+            task_data = {
+                "id": str(task.id),
+                "title": task.title,
+                "description": task.description,
+                "status": task.status.value,
+                "priority": task.priority.value,
+                "estimated_hours": task.estimated_hours,
+                "created_at": task.created_at.isoformat(),
+                "subtasks_count": subtasks_count
+            }
+            tasks_data.append(task_data)
+        
+        return tasks_data
+    
+    @staticmethod
+    def get_subtasks_by_task(db: Session, task_id: UUID, user_id: UUID) -> List[WorkItem]:
+        """Get all subtasks for a task."""
+        # Verify task exists and user has access
+        task = WorkItemService.get_work_item_by_id(db, task_id, user_id)
+        if not task or task.item_type != ItemType.TASK:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Task not found"
+            )
+        
+        return db.query(WorkItem).filter(
+            WorkItem.parent_id == task_id,
+            WorkItem.item_type == ItemType.SUBTASK
+        ).order_by(WorkItem.order_index, WorkItem.created_at).all()
     
     @staticmethod
     def delete_work_item(

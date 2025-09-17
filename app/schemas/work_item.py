@@ -59,6 +59,42 @@ class WorkItemHierarchyResponse(BaseModel):
     children: List['WorkItemHierarchyResponse'] = []
 
 
+class EpicWithStatsResponse(BaseModel):
+    """Epic with user stories count for project view."""
+    id: str
+    title: str
+    description: Optional[str] = None
+    status: str
+    priority: str
+    estimated_hours: Optional[float] = None
+    created_at: str
+    user_stories_count: int = 0
+
+
+class StoryWithStatsResponse(BaseModel):
+    """User story with tasks count."""
+    id: str
+    title: str
+    description: Optional[str] = None
+    status: str
+    priority: str
+    estimated_hours: Optional[float] = None
+    created_at: str
+    tasks_count: int = 0
+
+
+class TaskWithStatsResponse(BaseModel):
+    """Task with subtasks count."""
+    id: str
+    title: str
+    description: Optional[str] = None
+    status: str
+    priority: str
+    estimated_hours: Optional[float] = None
+    created_at: str
+    subtasks_count: int = 0
+
+
 class WorkItemStatsResponse(BaseModel):
     """Statistics about work items in a project."""
     total_items: int

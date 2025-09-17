@@ -10,12 +10,83 @@ from app.schemas.work_item import (
     WorkItemCreate,
     WorkItemUpdate, 
     WorkItemHierarchyResponse,
-    WorkItemStatsResponse
+    WorkItemStatsResponse,
+    EpicWithStatsResponse,
+    StoryWithStatsResponse,
+    TaskWithStatsResponse
 )
 from app.services.work_item import WorkItemService
 from app.db.models.work_item import ItemType, ItemStatus
 
 router = APIRouter()
+
+
+@router.get("/projects/{project_id}/epics", response_model=List[EpicWithStatsResponse])
+async def get_project_epics(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get all epics for a project with user stories count."""
+    try:
+        epics = WorkItemService.get_epics_with_stats(db, project_id, current_user.id)
+        return epics
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve epics: {str(e)}"
+        )
+
+
+@router.get("/epics/{epic_id}/user-stories", response_model=List[StoryWithStatsResponse])
+async def get_epic_user_stories(
+    epic_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get all user stories for an epic with tasks count."""
+    try:
+        user_stories = WorkItemService.get_user_stories_with_stats(db, epic_id, current_user.id)
+        return user_stories
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve user stories: {str(e)}"
+        )
+
+
+@router.get("/user-stories/{story_id}/tasks", response_model=List[TaskWithStatsResponse])
+async def get_story_tasks(
+    story_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get all tasks for a user story with subtasks count."""
+    try:
+        tasks = WorkItemService.get_tasks_with_stats(db, story_id, current_user.id)
+        return tasks
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve tasks: {str(e)}"
+        )
+
+
+@router.get("/tasks/{task_id}/subtasks", response_model=List[WorkItemResponse])
+async def get_task_subtasks(
+    task_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get all subtasks for a task."""
+    try:
+        subtasks = WorkItemService.get_subtasks_by_task(db, task_id, current_user.id)
+        return [WorkItemResponse.from_orm(subtask) for subtask in subtasks]
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve subtasks: {str(e)}"
+        )
 
 
 @router.get("/projects/{project_id}/work-items", response_model=List[WorkItemResponse])

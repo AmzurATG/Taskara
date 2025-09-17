@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from uuid import UUID
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status
@@ -36,6 +36,80 @@ class ProjectService:
         return db.query(Project).filter(
             Project.owner_id == user_id
         ).offset(skip).limit(limit).all()
+
+    @staticmethod
+    def get_project_view_details(db: Session, project_id: UUID, user_id: UUID) -> Optional[Dict[str, Any]]:
+        """Get project details with hierarchical structure for viewing."""
+        # Get the project
+        project = ProjectService.get_project(db, project_id, user_id)
+        if not project:
+            return None
+        
+        # Import here to avoid circular imports
+        from app.db.models.work_item import WorkItem, ItemType
+        
+        # Get all epics for this project
+        epics = db.query(WorkItem).filter(
+            WorkItem.project_id == project_id,
+            WorkItem.item_type == ItemType.EPIC,
+            WorkItem.parent_id == None
+        ).order_by(WorkItem.order_index, WorkItem.created_at).all()
+        
+        # Build epics data with counts
+        epics_data = []
+        for epic in epics:
+            # Count user stories under this epic
+            user_stories_count = db.query(WorkItem).filter(
+                WorkItem.parent_id == epic.id,
+                WorkItem.item_type == ItemType.STORY
+            ).count()
+            
+            epic_data = {
+                "id": str(epic.id),
+                "title": epic.title,
+                "description": epic.description,
+                "status": epic.status.value,
+                "priority": epic.priority.value,
+                "estimated_hours": epic.estimated_hours,
+                "created_at": epic.created_at.isoformat(),
+                "user_stories_count": user_stories_count
+            }
+            epics_data.append(epic_data)
+        
+        # Get work items summary
+        total_items = db.query(WorkItem).filter(WorkItem.project_id == project_id).count()
+        epics_count = len(epics_data)
+        stories_count = db.query(WorkItem).filter(
+            WorkItem.project_id == project_id,
+            WorkItem.item_type == ItemType.STORY
+        ).count()
+        tasks_count = db.query(WorkItem).filter(
+            WorkItem.project_id == project_id,
+            WorkItem.item_type == ItemType.TASK
+        ).count()
+        subtasks_count = db.query(WorkItem).filter(
+            WorkItem.project_id == project_id,
+            WorkItem.item_type == ItemType.SUBTASK
+        ).count()
+        
+        work_items_summary = {
+            "total_items": total_items,
+            "epics_count": epics_count,
+            "stories_count": stories_count,
+            "tasks_count": tasks_count,
+            "subtasks_count": subtasks_count
+        }
+        
+        return {
+            "id": project.id,
+            "name": project.name,
+            "description": project.description,
+            "owner_id": project.owner_id,
+            "created_at": project.created_at.isoformat(),
+            "updated_at": project.updated_at.isoformat(),
+            "epics": epics_data,
+            "work_items_summary": work_items_summary
+        }
 
     @staticmethod
     def update_project(db: Session, project_id: UUID, project_update: ProjectUpdate, user_id: UUID) -> Optional[Project]:

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from uuid import UUID
 from pydantic import BaseModel, Field
 
@@ -34,3 +34,18 @@ class Project(ProjectInDBBase):
 
 class ProjectInDB(ProjectInDBBase):
     pass
+
+
+class ProjectViewDetails(BaseModel):
+    """Project details with hierarchical work items for viewing."""
+    id: UUID
+    name: str
+    description: Optional[str] = None
+    owner_id: UUID
+    created_at: datetime
+    updated_at: datetime
+    epics: List[Dict[str, Any]] = []
+    work_items_summary: Dict[str, Any] = {}
+
+    class Config:
+        from_attributes = True

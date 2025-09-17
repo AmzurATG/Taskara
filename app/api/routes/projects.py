@@ -71,6 +71,24 @@ def update_project(
     return project
 
 
+@router.get("/{project_id}/view", response_model=dict)
+def view_project_details(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get project details with hierarchical work items for viewing."""
+    project_details = ProjectService.get_project_view_details(
+        db=db, project_id=project_id, user_id=current_user.id
+    )
+    if not project_details:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found"
+        )
+    return project_details
+
+
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_project(
     project_id: UUID,
