@@ -10,83 +10,12 @@ from app.schemas.work_item import (
     WorkItemCreate,
     WorkItemUpdate, 
     WorkItemHierarchyResponse,
-    WorkItemStatsResponse,
-    EpicWithStatsResponse,
-    StoryWithStatsResponse,
-    TaskWithStatsResponse
+    WorkItemStatsResponse
 )
 from app.services.work_item import WorkItemService
 from app.db.models.work_item import ItemType, ItemStatus
 
 router = APIRouter()
-
-
-@router.get("/projects/{project_id}/epics", response_model=List[EpicWithStatsResponse])
-async def get_project_epics(
-    project_id: UUID,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Get all epics for a project with user stories count."""
-    try:
-        epics = WorkItemService.get_epics_with_stats(db, project_id, current_user.id)
-        return epics
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve epics: {str(e)}"
-        )
-
-
-@router.get("/epics/{epic_id}/user-stories", response_model=List[StoryWithStatsResponse])
-async def get_epic_user_stories(
-    epic_id: UUID,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Get all user stories for an epic with tasks count."""
-    try:
-        user_stories = WorkItemService.get_user_stories_with_stats(db, epic_id, current_user.id)
-        return user_stories
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve user stories: {str(e)}"
-        )
-
-
-@router.get("/user-stories/{story_id}/tasks", response_model=List[TaskWithStatsResponse])
-async def get_story_tasks(
-    story_id: UUID,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Get all tasks for a user story with subtasks count."""
-    try:
-        tasks = WorkItemService.get_tasks_with_stats(db, story_id, current_user.id)
-        return tasks
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve tasks: {str(e)}"
-        )
-
-
-@router.get("/tasks/{task_id}/subtasks", response_model=List[WorkItemResponse])
-async def get_task_subtasks(
-    task_id: UUID,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Get all subtasks for a task."""
-    try:
-        subtasks = WorkItemService.get_subtasks_by_task(db, task_id, current_user.id)
-        return [WorkItemResponse.from_orm(subtask) for subtask in subtasks]
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to retrieve subtasks: {str(e)}"
-        )
 
 
 @router.get("/projects/{project_id}/work-items", response_model=List[WorkItemResponse])
@@ -276,4 +205,120 @@ async def delete_work_item(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete work item: {str(e)}"
+        )
+
+
+@router.get("/work-items/{work_item_id}/children", response_model=List[WorkItemResponse])
+async def get_work_item_children(
+    work_item_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get all children of a work item."""
+    try:
+        children = WorkItemService.get_children(db, work_item_id)
+        return [WorkItemResponse.from_orm(child) for child in children]
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve children: {str(e)}"
+        )
+
+
+@router.get("/work-items/{work_item_id}/path", response_model=List[WorkItemResponse])
+async def get_work_item_path(
+    work_item_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get the path from root to this work item (breadcrumb)."""
+    try:
+        path = WorkItemService.get_work_item_path(db, work_item_id)
+        return [WorkItemResponse.from_orm(item) for item in path]
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve path: {str(e)}"
+        )
+
+
+@router.put("/work-items/{work_item_id}/move")
+async def move_work_item(
+    work_item_id: UUID,
+    new_parent_id: Optional[UUID] = None,
+    new_order_index: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Move a work item to a different parent and/or order."""
+    try:
+        work_item = WorkItemService.move_work_item(
+            db, work_item_id, new_parent_id, new_order_index
+        )
+        
+        if not work_item:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Work item not found"
+            )
+        
+        return WorkItemResponse.from_orm(work_item)
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to move work item: {str(e)}"
+        )
+
+
+@router.get("/projects/{project_id}/work-items/stats/hierarchy")
+async def get_work_item_stats_hierarchy(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get work item statistics organized by hierarchy."""
+    try:
+        stats = WorkItemService.get_work_item_stats_by_hierarchy(db, project_id)
+        return stats
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve stats: {str(e)}"
+        )
+
+
+@router.post("/projects/{project_id}/work-items/fix-hierarchy")
+async def fix_project_hierarchy(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Automatically fix hierarchy for existing work items in a project."""
+    try:
+        result = WorkItemService.fix_project_hierarchy(db, project_id)
+        return result
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fix hierarchy: {str(e)}"
+        )
+
+
+@router.get("/projects/{project_id}/work-items/hierarchy-health")
+async def get_hierarchy_health_check(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Check the health of work item hierarchy for a project."""
+    try:
+        health = WorkItemService.get_hierarchy_health_check(db, project_id)
+        return health
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to check hierarchy health: {str(e)}"
         )
