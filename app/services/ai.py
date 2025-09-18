@@ -21,8 +21,8 @@ class WorkItemCreate(BaseModel):
 
 
 class ParsedRequirements(BaseModel):
-    work_items: List[WorkItemCreate] = Field(..., description="List of parsed work items")
-    summary: str = Field(..., min_length=50, max_length=500, description="Brief summary of requirements")
+    work_items: List[WorkItemCreate] = Field(default_factory=list, description="List of parsed work items")
+    summary: str = Field(..., min_length=10, max_length=500, description="Brief summary of requirements")
 
 
 class AIParser:
@@ -251,16 +251,12 @@ Parse this text into structured work items. Return ONLY valid JSON matching the 
             # Validate with Pydantic
             validated_data = ParsedRequirements(**parsed_data)
             
-            # Handle empty work_items list by creating a default item
+            # Return empty work_items if AI couldn't extract anything useful
             if not validated_data.work_items:
-                default_item = WorkItemCreate(
-                    title="Requirements Analysis Needed",
-                    description="The AI was unable to extract specific work items from this document chunk. Manual review and breakdown is recommended.",
-                    type="task",
-                    priority="medium",
-                    acceptance_criteria=["Document has been manually reviewed", "Work items have been properly defined"]
-                )
-                validated_data.work_items = [default_item]
+                return {
+                    'work_items': [],
+                    'summary': 'No actionable work items found in this document section'
+                }
             
             return validated_data.dict()
         
@@ -492,25 +488,12 @@ Parse this text into structured work items. Return ONLY valid JSON matching the 
                 print(error_msg)
                 errors.append(error_msg)
         
-        # Ultimate fallback: create a basic work item from the text
-        print(f"Creating fallback work item for chunk {chunk_index}")
-        fallback_item = WorkItemCreate(
-            title=f"Requirements Analysis - Chunk {chunk_index + 1}",
-            description=f"Manual review needed for this requirements section: {text_chunk[:200]}{'...' if len(text_chunk) > 200 else ''}",
-            type="task",
-            priority="medium",
-            acceptance_criteria=[
-                "Requirements text has been manually reviewed",
-                "Proper work items have been created from this section"
-            ]
-        )
-        
-        fallback_response = ParsedRequirements(
-            work_items=[fallback_item],
-            summary=f"Fallback work item created for chunk {chunk_index + 1} due to AI parsing failures"
-        )
-        
-        return fallback_response.dict()
+        # If all AI services fail, return empty result instead of creating fallback items
+        print(f"All AI services failed for chunk {chunk_index}, returning empty result")
+        return {
+            'work_items': [],
+            'summary': f"No work items could be extracted from chunk {chunk_index + 1} - all AI services failed"
+        }
 
     def chunk_text(self, text: str, max_chunk_size: int = 3000) -> List[str]:
         """Split text into manageable chunks for AI processing."""
