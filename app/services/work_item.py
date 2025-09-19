@@ -19,8 +19,19 @@ class WorkItemService:
     def create_work_item_from_ai(db: Session, work_item_data: Dict[str, Any], project_id: UUID) -> WorkItem:
         """Create a work item from parsed AI data."""
         
+        # Normalize work item type (fix any plural forms)
+        raw_type = work_item_data.get("type", "task")
+        if raw_type == "storys":
+            raw_type = "story"
+        elif raw_type == "tasks":
+            raw_type = "task"
+        elif raw_type == "subtasks":
+            raw_type = "subtask"
+        elif raw_type == "epics":
+            raw_type = "epic"
+        
         # Convert string enums to enum types
-        item_type = ItemType(work_item_data.get("type", "task"))
+        item_type = ItemType(raw_type)
         priority = ItemPriority(work_item_data.get("priority", "medium"))
         
         # Handle acceptance criteria (convert list to JSON string)

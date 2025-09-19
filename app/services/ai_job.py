@@ -33,6 +33,30 @@ class AIJobService:
         return AIJobResponse.from_orm(db_job)
 
     @staticmethod
+    def create_ai_job_minimal(db: Session, job_data: AIJobCreate) -> AIJobResponse:
+        """Create a new AI job for minimal file processing (max 10 work items)."""
+        db_job = AIJob(
+            project_id=job_data.project_id,
+            file_id=job_data.file_id,
+            status=JobStatus.QUEUED,
+            progress=0
+        )
+        db.add(db_job)
+        db.commit()
+        db.refresh(db_job)
+        
+        # Try to trigger background processing with minimal flag
+        try:
+            from app.tasks.ai_jobs import process_ai_job_minimal
+            process_ai_job_minimal.delay(str(db_job.id))
+        except Exception as e:
+            # If Celery/Redis is not available, mark the job for manual processing
+            print(f"Warning: Background task scheduling failed: {e}")
+            print(f"Minimal job {db_job.id} created but not scheduled for background processing")
+        
+        return AIJobResponse.from_orm(db_job)
+
+    @staticmethod
     def get_job(db: Session, job_id: UUID) -> Optional[AIJob]:
         """Get AI job by ID."""
         return db.query(AIJob).filter(AIJob.id == job_id).first()

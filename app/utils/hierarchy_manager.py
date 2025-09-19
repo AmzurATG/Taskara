@@ -187,6 +187,18 @@ def organize_work_items_intelligently(work_items_data: List[Dict[str, Any]], pro
     """
     logger.info(f"🤖 Starting intelligent organization for {len(work_items_data)} work items" + (f" from file: {file_name}" if file_name else ""))
     
+    # First, normalize any plural work item types that might have slipped through
+    for item in work_items_data:
+        item_type = item.get('type', 'task')
+        if item_type == 'storys':
+            item['type'] = 'story'
+        elif item_type == 'tasks':
+            item['type'] = 'task'
+        elif item_type == 'subtasks':
+            item['type'] = 'subtask'
+        elif item_type == 'epics':
+            item['type'] = 'epic'
+    
     categories = create_smart_categories()
     
     # Separate items by type

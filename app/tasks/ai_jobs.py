@@ -24,10 +24,13 @@ logger = logging.getLogger(__name__)
 @celery_app.task(bind=True, max_retries=3)
 def process_ai_job(self, job_id: str):
     """Process an AI job in the background."""
-    db = SessionLocal()
+    db = None
     job_uuid = UUID(job_id)
     
     try:
+        # Create database session with error handling
+        db = SessionLocal()
+        
         # Get the AI job
         ai_job = db.query(AIJob).filter(AIJob.id == job_uuid).first()
         if not ai_job:
@@ -176,17 +179,25 @@ def process_ai_job(self, job_id: str):
     except Exception as e:
         logger.error(f"Unexpected error processing job {job_id}: {str(e)}")
         
-        # Update job status
-        ai_job = db.query(AIJob).filter(AIJob.id == job_uuid).first()
-        if ai_job:
-            ai_job.status = JobStatus.FAILED
-            ai_job.error_message = f"Unexpected error: {str(e)}"
-            db.commit()
+        # Update job status with proper error handling
+        try:
+            if db:
+                ai_job = db.query(AIJob).filter(AIJob.id == job_uuid).first()
+                if ai_job:
+                    ai_job.status = JobStatus.FAILED
+                    ai_job.error_message = f"Unexpected error: {str(e)}"
+                    db.commit()
+        except Exception as db_error:
+            logger.error(f"Failed to update job status: {db_error}")
         
         return {"status": "failed", "error": str(e)}
         
     finally:
-        db.close()
+        if db:
+            try:
+                db.close()
+            except Exception as close_error:
+                logger.error(f"Error closing database session: {close_error}")
 
 
 def extract_text_from_file(file_path: str, file_type: str) -> str:
@@ -207,14 +218,162 @@ def extract_text_from_file(file_path: str, file_type: str) -> str:
         raise
 
 
+@celery_app.task(bind=True, max_retries=3)
+def process_ai_job_minimal(self, job_id: str):
+    """Process an AI job with minimal parsing in the background (max 10 work items)."""
+    db = None
+    job_uuid = UUID(job_id)
+    
+    try:
+        # Create database session with error handling
+        db = SessionLocal()
+        
+        # Get the AI job
+        ai_job = db.query(AIJob).filter(AIJob.id == job_uuid).first()
+        if not ai_job:
+            logger.error(f"AI job {job_id} not found")
+            return {"status": "failed", "error": "Job not found"}
+        
+        # Mark as processing
+        ai_job.status = JobStatus.PROCESSING
+        ai_job.progress = 10
+        db.commit()
+        
+        # Get file record
+        file_record = db.query(File).filter(File.id == ai_job.file_id).first()
+        if not file_record:
+            logger.error(f"File not found for job {job_id}")
+            ai_job.status = JobStatus.FAILED
+            ai_job.error_message = "Associated file not found"
+            db.commit()
+            return {"status": "failed", "error": "File not found"}
+        
+        logger.info(f"🔥 Processing minimal AI job {job_id} for file: {file_record.file_name}")
+        
+        # Extract text from file
+        logger.info(f"Extracting text from {file_record.storage_path}")
+        ai_job.progress = 30
+        db.commit()
+        
+        try:
+            text_content = extract_text_from_file(file_record.storage_path)
+            if not text_content.strip():
+                raise ValueError("No text content extracted from file")
+            
+        except Exception as e:
+            logger.error(f"Text extraction failed for job {job_id}: {str(e)}")
+            ai_job.status = JobStatus.FAILED
+            ai_job.error_message = f"Text extraction failed: {str(e)}"
+            db.commit()
+            return {"status": "failed", "error": str(e)}
+        
+        # Parse content with AI using minimal approach
+        logger.info(f"Processing text with minimal AI for job {job_id}")
+        ai_job.progress = 60
+        db.commit()
+        
+        try:
+            ai_service = AIParser()
+            # Use the new minimal parsing method
+            parsed_results = ai_service.parse_requirements_document_minimal(text_content)
+            
+            if not parsed_results:
+                raise ValueError("AI parsing returned no results")
+            
+            # Log the minimal results
+            total_work_items = sum(len(result.get("work_items", [])) for result in parsed_results)
+            logger.info(f"🎯 Minimal parsing completed for {file_record.file_name}:")
+            logger.info(f"   📄 Generated {len(parsed_results)} result sections")
+            logger.info(f"   📊 Total work items: {total_work_items} (minimal approach)")
+                
+        except Exception as e:
+            logger.error(f"AI minimal parsing failed for job {job_id}: {str(e)}")
+            ai_job.status = JobStatus.FAILED
+            ai_job.error_message = f"AI minimal parsing failed: {str(e)}"
+            db.commit()
+            
+            # Try falling back to regular two-pass if minimal fails
+            try:
+                logger.info(f"Falling back to two-pass approach for job {job_id}")
+                parsed_results = ai_service.parse_requirements_document_two_pass(text_content)
+                total_work_items = sum(len(result.get("work_items", [])) for result in parsed_results)
+                logger.info(f"📊 Fallback two-pass completed: {total_work_items} work items")
+            except Exception as fallback_e:
+                logger.error(f"Fallback also failed for job {job_id}: {str(fallback_e)}")
+                return {"status": "failed", "error": str(e)}
+        
+        # Create work items in database
+        logger.info(f"Creating work items in database for job {job_id}")
+        ai_job.progress = 80
+        db.commit()
+        
+        try:
+            work_item_service = WorkItemService()
+            created_items = work_item_service.create_work_items_with_hierarchy(
+                db=db,
+                project_id=ai_job.project_id,
+                parsed_results=parsed_results,
+                file_name=file_record.file_name
+            )
+            
+            logger.info(f"✅ Minimal processing completed for {file_record.file_name}")
+            logger.info(f"   📊 Created {len(created_items)} work items in database")
+            
+        except Exception as e:
+            logger.error(f"Work item creation failed for job {job_id}: {str(e)}")
+            ai_job.status = JobStatus.FAILED
+            ai_job.error_message = f"Work item creation failed: {str(e)}"
+            db.commit()
+            return {"status": "failed", "error": str(e)}
+        
+        # Mark as completed
+        ai_job.status = JobStatus.DONE
+        ai_job.progress = 100
+        db.commit()
+        
+        logger.info(f"🎉 Minimal AI job {job_id} completed successfully")
+        return {
+            "status": "completed", 
+            "work_items_created": len(created_items),
+            "total_work_items": total_work_items
+        }
+        
+    except Exception as e:
+        logger.error(f"Unexpected error in minimal AI job {job_id}: {str(e)}")
+        
+        # Mark job as failed
+        try:
+            ai_job = db.query(AIJob).filter(AIJob.id == job_uuid).first()
+            if ai_job:
+                ai_job.status = JobStatus.FAILED
+                ai_job.error_message = f"Unexpected error: {str(e)}"
+                db.commit()
+        except:
+            pass  # Don't fail on cleanup failure
+        
+        return {"status": "failed", "error": str(e)}
+        
+    finally:
+        if db:
+            try:
+                db.close()
+            except Exception as close_error:
+                logger.error(f"Error closing database session: {close_error}")
+
+
 @celery_app.task
 def cleanup_old_jobs():
     """Clean up old completed/failed jobs."""
-    db = SessionLocal()
+    db = None
     try:
+        db = SessionLocal()
         # This is a maintenance task to clean up old jobs
         # You can implement retention policies here
         logger.info("Job cleanup task executed")
         
     finally:
-        db.close()
+        if db:
+            try:
+                db.close()
+            except Exception as close_error:
+                logger.error(f"Error closing database session: {close_error}")

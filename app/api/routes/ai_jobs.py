@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.services.ai_job import AIJobService
-from app.schemas.ai_job import AIJobResponse
+from app.schemas.ai_job import AIJobResponse, AIJobCreate
 from app.core.security import get_current_user
 from app.db.models.user import User
 from app.services.project import ProjectService
@@ -29,6 +29,35 @@ def get_project_ai_jobs(
     
     jobs = AIJobService.get_project_jobs(db, project_id)
     return [AIJobResponse.from_orm(job) for job in jobs]
+
+
+@router.post("/files/{file_id}/reprocess-minimal", response_model=AIJobResponse, status_code=status.HTTP_201_CREATED)
+def reprocess_file_minimal(
+    file_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Reprocess a file with ultra-minimal parsing (max 10 work items)."""
+    # Get the file to verify ownership and get project_id
+    from app.services.file_processing import FileService
+    file_record = FileService.get_file(db, file_id, current_user.id)
+    
+    if not file_record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found or access denied"
+        )
+    
+    # Create a new AI job for minimal processing
+    ai_job = AIJobService.create_ai_job_minimal(
+        db=db,
+        job_data=AIJobCreate(
+            project_id=file_record.project_id,
+            file_id=file_id
+        )
+    )
+    
+    return ai_job
 
 
 @router.get("/jobs/{job_id}", response_model=AIJobResponse)

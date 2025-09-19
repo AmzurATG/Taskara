@@ -2,9 +2,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import auth, projects, health, files, ai_jobs, work_items
 from app.core.config import settings
+from app.db.session import test_connection
+import logging
 
 # Import all models to ensure proper SQLAlchemy relationship configuration
 from app.db import base  # This imports all models in the correct order
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Create FastAPI application
 app = FastAPI(
@@ -21,6 +27,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.on_event("startup")
+async def startup_event():
+    """Test database connection on startup."""
+    logger.info("Starting Task Generator API...")
+    if test_connection():
+        logger.info("✅ Database connection verified")
+    else:
+        logger.error("❌ Database connection failed - check your configuration")
 
 # Include routers
 app.include_router(health.router, tags=["health"])

@@ -77,34 +77,37 @@ class AIParser:
     
     def _create_epic_consolidation_prompt(self) -> str:
         """Create system prompt for first pass: extracting and consolidating epics."""
-        return """You are a professional business analyst tasked with identifying and consolidating high-level features (epics) from software requirements documents.
+        return """You are a professional business analyst tasked with identifying ONLY the most critical, high-level features (epics) from software requirements documents.
 
 CRITICAL INSTRUCTIONS FOR EPIC CONSOLIDATION:
-1. ONLY extract information that is explicitly stated in the provided document.
-2. Group SIMILAR or RELATED requirements into unified, logical epics.
-3. Minimize fragmentation - combine related features under broader epics.
-4. Focus on business value and user-facing capabilities.
-5. Each epic should represent a significant feature area (weeks/months of work).
-6. Aim for 8-15 consolidated epics maximum.
+1. ONLY extract the 3-5 MOST IMPORTANT business capabilities from the document.
+2. Aggressively group ALL RELATED requirements into single, broad epics.
+3. Focus on major business value and user-facing functionality, not technical implementation details.
+4. Each epic should cover multiple related requirements and represent significant business value.
+5. Eliminate redundant, minor, or purely technical features.
+6. Maximum 5 epics total - prefer fewer, broader groupings.
+
+CONSOLIDATION APPROACH:
+1. Identify the core business domain and purpose of the application
+2. Group requirements by major functional areas or user workflows
+3. Merge similar capabilities regardless of specific implementation details
+4. Focus on what users will accomplish, not how it's built
+5. Each epic should represent weeks/months of development effort
+6. Use business-friendly language that stakeholders would understand
+
+GENERAL EPIC PATTERNS (ADAPT TO YOUR DOMAIN):
+- User/Account Management (authentication, profiles, permissions, user lifecycle)
+- Core Business Logic (main application functionality, primary workflows)
+- Data Management (content creation, processing, storage, reporting)
+- Communication & Interaction (messaging, notifications, collaboration)
+- Integration & Administration (external systems, admin tools, configuration)
 
 CONSOLIDATION RULES:
-1. Merge similar features (e.g., "Chat Service" + "Video Chat" = "Customer Communication")
-2. Group by business domain (e.g., all authentication features under "User Management")
-3. Combine related technical features (e.g., all payment features under "Payment System")
-4. Use clear, business-friendly epic titles
-5. Include comprehensive descriptions covering all merged requirements
-
-EPIC CATEGORIES TO CONSIDER:
-- User Management & Authentication
-- Product Catalog & Search  
-- Payment & Financial Services
-- Order Management & Processing
-- Customer Service & Support
-- Content Management
-- Reporting & Analytics
-- Integration & API Services
-- Mobile & Responsive Features
-- Security & Compliance
+- If requirements mention user registration, login, profiles, permissions → "User Management"
+- If requirements focus on main business processes → "Core [Domain] Operations"
+- If requirements involve data entry, processing, reporting → "Data Management"
+- If requirements include messaging, notifications, communication → "Communication"
+- If requirements mention external APIs, admin functions → "System Integration"
 
 OUTPUT FORMAT:
 Return ONLY a valid JSON object:
@@ -112,42 +115,62 @@ Return ONLY a valid JSON object:
 {
   "consolidated_epics": [
     {
-      "title": "string (10-100 chars, business-friendly)",
-      "description": "string (50-1000 chars, comprehensive coverage)",
-      "category": "string (business domain)",
-      "priority": "low|medium|high|critical",
-      "acceptance_criteria": ["high-level business outcomes"],
-      "consolidated_requirements": ["list of original requirements merged into this epic"]
+      "title": "string (broad business capability in domain context)",
+      "description": "string (comprehensive coverage explaining business value)",
+      "category": "string (functional domain based on requirements)",
+      "priority": "high|critical",
+      "acceptance_criteria": ["major business outcomes and user goals"],
+      "consolidated_requirements": ["ALL original requirements merged into this epic"]
     }
   ],
-  "summary": "string (consolidation overview)"
+  "summary": "string (consolidation overview explaining grouping rationale)"
 }
 
-REMEMBER: Focus on consolidation and minimizing fragmentation. Each epic should be substantial and meaningful."""
+REMEMBER: Adapt categories to the actual business domain. Maximum 5 epics. Each epic should consolidate multiple requirements. Be extremely aggressive in grouping related functionality."""
 
     def _create_epic_breakdown_prompt(self) -> str:
-        """Create system prompt for second pass: breaking epics into detailed work items."""
-        return """You are a professional business analyst tasked with breaking down epics into detailed user stories, tasks, and subtasks.
+        """Create system prompt for second pass: breaking epics into minimal essential work items."""
+        return """You are a professional business analyst tasked with breaking down epics into essential work items with proper hierarchy.
 
-CRITICAL INSTRUCTIONS FOR EPIC BREAKDOWN:
-1. Break down the provided epic into actionable user stories (3-8 stories per epic).
-2. For each story, create implementation tasks (2-5 tasks per story).
-3. For complex tasks, add subtasks (1-3 subtasks per task).
-4. Maintain clear parent-child relationships.
-5. Ensure each work item is actionable and testable.
-6. Keep the total breakdown minimal but complete.
+CRITICAL INSTRUCTIONS FOR BREAKDOWN:
+1. Break down each epic into 1-2 most critical user stories that deliver core business value.
+2. Create 1-2 essential implementation tasks per story.
+3. For complex epics with multiple features/requirements (5+ consolidated requirements), create subtasks under major tasks.
+4. Focus on MVP (Minimum Viable Product) features that users need most.
+5. Maximum 6 total work items per epic breakdown (including subtasks).
+6. Eliminate nice-to-have features, edge cases, and administrative overhead.
 
-BREAKDOWN RULES:
-1. Stories should deliver user value and be testable.
-2. Tasks should be technical implementation steps.
-3. Subtasks should be granular development work (2-8 hours).
-4. Use exact parent titles for parent_reference.
-5. Prioritize based on business value and dependencies.
+HIERARCHY REQUIREMENTS:
+- ALWAYS include subtasks for epics that consolidate 5+ requirements
+- Complex tasks (estimated > 40 hours) should be broken into 2-3 subtasks
+- Subtasks should represent granular, actionable work units (4-16 hours each)
+- Use exact parent task title in parent_reference for subtasks
 
-WORK ITEM TYPES:
-- Story: User-facing functionality delivering business value (1-3 weeks)
-- Task: Technical implementation work (3-10 days)
-- Subtask: Granular development work (2-8 hours)
+BREAKDOWN PHILOSOPHY:
+- Start with core user needs and business value
+- Focus on functionality users interact with directly
+- Prioritize features that differentiate the application
+- For complex epics, drill down to implementable work units
+- Each story should solve a real user problem
+- Each task should be a meaningful development milestone
+- Each subtask should be a specific, actionable work item
+
+WORK ITEM GUIDELINES:
+- Story: Core user-facing functionality that delivers immediate business value (1-3 weeks effort)
+- Task: Major implementation component that enables the story (1-2 weeks effort)
+- Subtask: Granular implementation work within a task (3-15 hours effort)
+
+SUBTASK GENERATION RULES:
+- If epic has 5+ consolidated requirements → MUST include subtasks
+- If task involves multiple technical components → break into subtasks
+- If task spans frontend + backend + database → create subtasks for each
+- Common subtask patterns: "Design UI components", "Implement API endpoints", "Create database schema", "Add validation logic"
+
+QUALITY OVER QUANTITY:
+- Better to have fewer well-defined items with proper hierarchy
+- Each work item should be something users would notice and value
+- Subtasks ensure complex work is manageable and trackable
+- Focus on the 20% of features that deliver 80% of the value
 
 OUTPUT FORMAT:
 Return ONLY a valid JSON object:
@@ -155,29 +178,32 @@ Return ONLY a valid JSON object:
 {
   "work_items": [
     {
-      "title": "string (5-150 chars)",
-      "description": "string (20-1000 chars)",
+      "title": "string (essential user-facing feature or implementation component)",
+      "description": "string (focused on core business value and user benefit)",
       "type": "story|task|subtask",
-      "priority": "low|medium|high|critical",
-      "acceptance_criteria": ["specific, testable criteria"],
+      "priority": "high|critical",
+      "acceptance_criteria": ["essential, testable criteria that define success"],
       "estimated_hours": null or number,
       "parent_reference": null or "exact parent title"
     }
   ],
   "epic_title": "string (title of epic being broken down)",
-  "summary": "string (breakdown overview)"
+  "summary": "string (explanation of breakdown focusing on business value and hierarchy)"
 }
 
-REMEMBER: Keep breakdown minimal but complete. Each work item should be actionable."""
+REMEMBER: Maximum 5 work items per epic. Focus on absolute essentials that deliver real user value. No administrative or setup tasks unless critical to core functionality."""
 
-    def _create_epic_consolidation_user_prompt(self, text_chunk: str) -> str:
+    def _create_epic_consolidation_user_prompt(self, text_chunk: str, max_epics: int = 5) -> str:
         """Create user prompt for epic consolidation."""
         return f"""Analyze the following requirements text and extract consolidated epics.
 
 REQUIREMENTS TEXT:
 {text_chunk}
 
-Identify and consolidate similar requirements into unified epics. Focus on minimizing fragmentation and grouping related features. Return ONLY valid JSON matching the consolidation schema."""
+Identify and consolidate similar requirements into unified epics. Focus on minimizing fragmentation and grouping related features. 
+IMPORTANT: Create a maximum of {max_epics} epics total. Aggressively group similar features together.
+
+Return ONLY valid JSON matching the consolidation schema."""
 
     def _create_epic_breakdown_user_prompt(self, epic_data: Dict[str, Any], original_text: str) -> str:
         """Create user prompt for breaking down an epic into detailed work items."""
@@ -186,12 +212,20 @@ Identify and consolidate similar requirements into unified epics. Focus on minim
         consolidated_requirements = epic_data.get('consolidated_requirements', [])
         
         requirements_text = "\n".join([f"- {req}" for req in consolidated_requirements])
+        requirement_count = len(consolidated_requirements)
+        
+        subtask_instruction = ""
+        if requirement_count >= 5:
+            subtask_instruction = f"""
+SUBTASK REQUIREMENT: This epic consolidates {requirement_count} requirements, so you MUST include subtasks for complex tasks. 
+Break major tasks into 2-3 granular subtasks to ensure implementability."""
         
         return f"""Break down the following epic into detailed user stories, tasks, and subtasks.
 
 EPIC TO BREAK DOWN:
 Title: {epic_title}
 Description: {epic_description}
+Requirements Count: {requirement_count} consolidated requirements{subtask_instruction}
 
 ORIGINAL REQUIREMENTS COVERED:
 {requirements_text}
@@ -199,7 +233,7 @@ ORIGINAL REQUIREMENTS COVERED:
 RELEVANT CONTEXT FROM ORIGINAL DOCUMENT:
 {original_text[:2000]}...
 
-Break this epic into actionable user stories (3-8 stories), then tasks for each story (2-5 tasks), and subtasks where needed (1-3 subtasks). Keep the breakdown minimal but complete. Return ONLY valid JSON matching the breakdown schema."""
+Break this epic into actionable work items following the hierarchy rules. Include proper parent_reference for subtasks. Return ONLY valid JSON matching the breakdown schema."""
 
     def _create_system_prompt(self) -> str:
         """Create detailed system prompt to prevent hallucination (legacy method for compatibility)."""
@@ -891,12 +925,12 @@ Parse this text into structured work items. Return ONLY valid JSON matching the 
         
         raise Exception(f"All AI services failed for epic breakdown: {'; '.join(errors)}")
 
-    def consolidate_epics_from_text(self, text: str) -> Dict[str, Any]:
+    def consolidate_epics_from_text(self, text: str, max_epics: int = 5) -> Dict[str, Any]:
         """First pass: Extract and consolidate epics from requirements text."""
         if not text.strip():
             raise ValueError("Empty text provided")
         
-        user_prompt = self._create_epic_consolidation_user_prompt(text)
+        user_prompt = self._create_epic_consolidation_user_prompt(text, max_epics)
         
         try:
             response = self._call_ai_for_epic_consolidation(user_prompt)
@@ -982,6 +1016,93 @@ Parse this text into structured work items. Return ONLY valid JSON matching the 
                 print(f"      ⚠️ No work items generated for this epic")
         
         print(f"🎉 Two-pass parsing completed: {len(all_results)} result sections")
+        return all_results
+
+    def parse_requirements_document_minimal(self, text: str) -> List[Dict[str, Any]]:
+        """Parse requirements document with ultra-minimal approach - maximum 10 total work items."""
+        if not text.strip():
+            raise ValueError("Empty document provided")
+        
+        print("🎯 Starting ultra-minimal AI parsing (max 10 work items)...")
+        
+        # Use only 3 epics maximum for ultra-minimal approach
+        epic_consolidation_result = self.consolidate_epics_from_text(text, max_epics=3)
+        consolidated_epics = epic_consolidation_result.get('consolidated_epics', [])
+        
+        if not consolidated_epics:
+            print("⚠️ No epics consolidated, creating single epic from text")
+            # Create a single epic if consolidation fails
+            consolidated_epics = [{
+                'title': 'Project Implementation',
+                'description': text[:200] + '...' if len(text) > 200 else text,
+                'priority': 'high',
+                'acceptance_criteria': ['Complete project requirements']
+            }]
+        
+        # Limit to maximum 3 epics
+        consolidated_epics = consolidated_epics[:3]
+        print(f"✅ Using {len(consolidated_epics)} epics for minimal approach")
+        
+        all_results = []
+        total_work_items = 0
+        max_total_items = 10
+        
+        # Add the consolidated epics themselves (count towards total)
+        epic_work_items = []
+        for epic in consolidated_epics:
+            if total_work_items >= max_total_items:
+                break
+            
+            epic_work_item = {
+                'title': epic['title'],
+                'description': epic['description'],
+                'type': 'epic',
+                'priority': epic.get('priority', 'high'),
+                'acceptance_criteria': epic.get('acceptance_criteria', []),
+                'estimated_hours': None,
+                'parent_reference': None
+            }
+            epic_work_items.append(epic_work_item)
+            total_work_items += 1
+        
+        if epic_work_items:
+            all_results.append({
+                'work_items': epic_work_items,
+                'summary': f"Ultra-minimal: {len(epic_work_items)} epics"
+            })
+        
+        # Break down epics into very few work items
+        remaining_items = max_total_items - total_work_items
+        items_per_epic = max(1, remaining_items // len(consolidated_epics)) if consolidated_epics else 1
+        
+        for i, epic in enumerate(consolidated_epics):
+            if total_work_items >= max_total_items:
+                break
+                
+            print(f"   🔨 Minimal breakdown of epic {i+1}: '{epic['title']}' (max {items_per_epic} items)")
+            
+            # Get breakdown but limit items strictly
+            breakdown_result = self.breakdown_epic_to_work_items(epic, text)
+            
+            if breakdown_result.get('work_items'):
+                # Take only the most essential items
+                limited_items = breakdown_result['work_items'][:items_per_epic]
+                actual_items = []
+                
+                for item in limited_items:
+                    if total_work_items >= max_total_items:
+                        break
+                    actual_items.append(item)
+                    total_work_items += 1
+                
+                if actual_items:
+                    all_results.append({
+                        'work_items': actual_items,
+                        'summary': f"Minimal breakdown: {len(actual_items)} essential items for '{epic['title']}'"
+                    })
+                    print(f"      ✅ Added {len(actual_items)} essential work items")
+        
+        print(f"🎉 Ultra-minimal parsing completed: {total_work_items} total work items (max {max_total_items})")
         return all_results
 
     def chunk_text(self, text: str, max_chunk_size: int = 3000) -> List[str]:
