@@ -2,9 +2,12 @@ from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 from app.api.deps import get_current_user, get_db
 from app.db.models.user import User
+from app.db.models.file import File
+from app.db.models.ai_job import AIJob, JobStatus
 from app.schemas.work_item import (
     WorkItemResponse, 
     WorkItemCreate,
@@ -321,4 +324,194 @@ async def get_hierarchy_health_check(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to check hierarchy health: {str(e)}"
+        )
+
+
+@router.get("/projects/{project_id}/work-items/generation-stats")
+async def get_work_item_generation_stats(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get work item generation statistics by file for a project."""
+    try:
+        # Get all files for the project with their AI jobs
+        files_with_jobs = db.query(File).join(AIJob).filter(
+            File.project_id == project_id,
+            AIJob.status == JobStatus.DONE
+        ).all()
+        
+        if not files_with_jobs:
+            return {
+                "project_id": str(project_id),
+                "total_files_processed": 0,
+                "file_statistics": [],
+                "overall_totals": {
+                    "epics": 0,
+                    "stories": 0,
+                    "tasks": 0,
+                    "subtasks": 0,
+                    "total_work_items": 0
+                }
+            }
+        
+        file_stats = []
+        overall_totals = {"epics": 0, "stories": 0, "tasks": 0, "subtasks": 0}
+        
+        for file in files_with_jobs:
+            # Get the latest successful AI job for this file
+            latest_job = db.query(AIJob).filter(
+                AIJob.file_id == file.id,
+                AIJob.status == JobStatus.DONE
+            ).order_by(AIJob.created_at.desc()).first()
+            
+            if latest_job:
+                # Parse completion message to extract work item counts
+                error_message = latest_job.error_message or ""
+                
+                # Extract breakdown from completion message
+                epics = stories = tasks = subtasks = 0
+                if "epics" in error_message:
+                    try:
+                        import re
+                        # Parse the completion message format
+                        epic_match = re.search(r'(\d+) epics', error_message)
+                        story_match = re.search(r'(\d+) stories', error_message)
+                        task_match = re.search(r'(\d+) tasks', error_message)
+                        subtask_match = re.search(r'(\d+) subtasks', error_message)
+                        
+                        if epic_match: epics = int(epic_match.group(1))
+                        if story_match: stories = int(story_match.group(1))
+                        if task_match: tasks = int(task_match.group(1))
+                        if subtask_match: subtasks = int(subtask_match.group(1))
+                    except:
+                        # Fallback: count actual work items created after this job
+                        from app.db.models.work_item import WorkItem
+                        work_items = db.query(WorkItem).filter(
+                            WorkItem.project_id == project_id,
+                            WorkItem.created_at >= latest_job.created_at
+                        ).all()
+                        
+                        epics = len([w for w in work_items if w.item_type == ItemType.EPIC])
+                        stories = len([w for w in work_items if w.item_type == ItemType.STORY])
+                        tasks = len([w for w in work_items if w.item_type == ItemType.TASK])
+                        subtasks = len([w for w in work_items if w.item_type == ItemType.SUBTASK])
+                
+                file_stat = {
+                    "file_id": str(file.id),
+                    "file_name": file.file_name,
+                    "processed_at": latest_job.created_at.isoformat(),
+                    "work_items_created": {
+                        "epics": epics,
+                        "stories": stories,
+                        "tasks": tasks,
+                        "subtasks": subtasks,
+                        "total": epics + stories + tasks + subtasks
+                    },
+                    "job_id": str(latest_job.id)
+                }
+                
+                file_stats.append(file_stat)
+                
+                # Update overall totals
+                overall_totals["epics"] += epics
+                overall_totals["stories"] += stories
+                overall_totals["tasks"] += tasks
+                overall_totals["subtasks"] += subtasks
+        
+        overall_totals["total_work_items"] = sum(overall_totals.values())
+        
+        return {
+            "project_id": str(project_id),
+            "total_files_processed": len(file_stats),
+            "file_statistics": file_stats,
+            "overall_totals": overall_totals
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve generation stats: {str(e)}"
+        )
+
+
+@router.get("/projects/{project_id}/files/{file_id}/work-items/stats")
+async def get_file_work_item_stats(
+    project_id: UUID,
+    file_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get detailed work item generation statistics for a specific file."""
+    try:
+        # Get the file
+        file = db.query(File).filter(
+            File.id == file_id,
+            File.project_id == project_id
+        ).first()
+        
+        if not file:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="File not found"
+            )
+        
+        # Get the latest successful AI job for this file
+        latest_job = db.query(AIJob).filter(
+            AIJob.file_id == file.id,
+            AIJob.status == JobStatus.DONE
+        ).order_by(AIJob.created_at.desc()).first()
+        
+        if not latest_job:
+            return {
+                "file_id": str(file.id),
+                "file_name": file.file_name,
+                "status": "no_successful_processing",
+                "work_items_created": {
+                    "epics": 0,
+                    "stories": 0,
+                    "tasks": 0,
+                    "subtasks": 0,
+                    "total": 0
+                }
+            }
+        
+        # Get work items created after this job
+        from app.db.models.work_item import WorkItem
+        work_items = db.query(WorkItem).filter(
+            WorkItem.project_id == project_id,
+            WorkItem.created_at >= latest_job.created_at
+        ).all()
+        
+        # Count by type
+        type_counts = {
+            "epics": len([w for w in work_items if w.item_type == ItemType.EPIC]),
+            "stories": len([w for w in work_items if w.item_type == ItemType.STORY]),
+            "tasks": len([w for w in work_items if w.item_type == ItemType.TASK]),
+            "subtasks": len([w for w in work_items if w.item_type == ItemType.SUBTASK])
+        }
+        type_counts["total"] = sum(type_counts.values())
+        
+        # Get hierarchy relationships
+        hierarchy_info = {
+            "orphaned_items": len([w for w in work_items if w.parent_id is None and w.item_type != ItemType.EPIC]),
+            "total_relationships": len([w for w in work_items if w.parent_id is not None])
+        }
+        
+        return {
+            "file_id": str(file.id),
+            "file_name": file.file_name,
+            "processed_at": latest_job.created_at.isoformat(),
+            "job_id": str(latest_job.id),
+            "work_items_created": type_counts,
+            "hierarchy_info": hierarchy_info,
+            "completion_message": latest_job.error_message
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve file stats: {str(e)}"
         )

@@ -18,5 +18,3 @@ class User(Base):
     
     # Relationships
     projects = relationship("Project", back_populates="owner")
-
-from app.db.models.project import Project  # Fix for circular import

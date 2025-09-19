@@ -5,7 +5,12 @@ Enhanced hierarchy management for automatic work item organization
 from typing import List, Dict, Any, Optional, Tuple
 from uuid import UUID
 import json
+import logging
 from collections import defaultdict
+
+# Set up logging for hierarchy management
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 def create_smart_categories():
     """Define smart categories for automatic work item organization"""
@@ -175,11 +180,13 @@ def assign_task_to_story(task_data: Dict[str, Any], stories: List[Dict[str, Any]
     
     return story.get('title') if best_story and best_score > 0 else None
 
-def organize_work_items_intelligently(work_items_data: List[Dict[str, Any]], project_id: UUID) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+def organize_work_items_intelligently(work_items_data: List[Dict[str, Any]], project_id: UUID, file_name: str = None) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """
     Intelligently organize work items into proper hierarchy
     Returns: (organized_items, organization_stats)
     """
+    logger.info(f"🤖 Starting intelligent organization for {len(work_items_data)} work items" + (f" from file: {file_name}" if file_name else ""))
+    
     categories = create_smart_categories()
     
     # Separate items by type
@@ -188,9 +195,17 @@ def organize_work_items_intelligently(work_items_data: List[Dict[str, Any]], pro
     tasks = [item for item in work_items_data if item.get('type') == 'task']
     subtasks = [item for item in work_items_data if item.get('type') == 'subtask']
     
+    # Log initial distribution
+    logger.info(f"📊 Initial work item distribution for {file_name or 'project'}:")
+    logger.info(f"   📖 Epics: {len(epics)}")
+    logger.info(f"   📝 Stories: {len(stories)}")
+    logger.info(f"   ⚡ Tasks: {len(tasks)}")
+    logger.info(f"   🔧 Subtasks: {len(subtasks)}")
+    
     organized_items = []
     category_epic_map = {}  # category_name -> epic_title
     stats = {
+        'file_name': file_name,
         'original_counts': {
             'epics': len(epics),
             'stories': len(stories), 
@@ -199,18 +214,25 @@ def organize_work_items_intelligently(work_items_data: List[Dict[str, Any]], pro
         },
         'created_epics': 0,
         'assigned_relationships': 0,
-        'orphaned_items': 0
+        'orphaned_items': 0,
+        'categories_used': [],
+        'epic_category_mapping': {}
     }
     
     # Step 1: Process existing epics
+    logger.info("🏗️ Processing existing epics...")
     for epic in epics:
         category = categorize_work_item(epic, categories)
         if category:
             category_epic_map[category] = epic['title']
             epic['_category'] = category
+            stats['categories_used'].append(category)
+            stats['epic_category_mapping'][epic['title']] = category
+            logger.info(f"   📖 Epic '{epic['title'][:50]}...' categorized as '{category}'")
         organized_items.append(epic)
     
     # Step 2: Create epics for orphaned stories
+    logger.info("📝 Processing stories and creating missing epics...")
     orphaned_stories = []
     for story in stories:
         if not story.get('parent_reference'):
@@ -221,29 +243,41 @@ def organize_work_items_intelligently(work_items_data: List[Dict[str, Any]], pro
                 organized_items.append(new_epic)
                 category_epic_map[category] = new_epic['title']
                 stats['created_epics'] += 1
+                stats['categories_used'].append(category)
+                stats['epic_category_mapping'][new_epic['title']] = category
+                logger.info(f"   ➕ Created new epic '{new_epic['title']}' for category '{category}'")
             
             if category and category in category_epic_map:
                 story['parent_reference'] = category_epic_map[category]
                 stats['assigned_relationships'] += 1
+                logger.info(f"   🔗 Linked story '{story['title'][:40]}...' to epic '{category_epic_map[category][:40]}...'")
             else:
                 orphaned_stories.append(story)
+                logger.warning(f"   ⚠️ Story '{story['title'][:40]}...' remains orphaned")
         
         organized_items.append(story)
     
     # Step 3: Assign orphaned stories to general epic
     if orphaned_stories:
+        logger.info(f"🔧 Handling {len(orphaned_stories)} orphaned stories...")
         general_category = 'System & Technical'  # Most flexible category
         if general_category not in category_epic_map:
             new_epic = create_epic_for_category(general_category, categories[general_category], project_id)
             organized_items.append(new_epic)
             category_epic_map[general_category] = new_epic['title']
             stats['created_epics'] += 1
+            stats['categories_used'].append(general_category)
+            stats['epic_category_mapping'][new_epic['title']] = general_category
+            logger.info(f"   ➕ Created general epic '{new_epic['title']}' for orphaned stories")
         
         for story in orphaned_stories:
             story['parent_reference'] = category_epic_map[general_category]
             stats['assigned_relationships'] += 1
+            logger.info(f"   🔗 Assigned orphaned story '{story['title'][:40]}...' to general epic")
     
     # Step 4: Assign tasks to stories
+    logger.info("⚡ Processing tasks and linking to stories...")
+    tasks_assigned = 0
     for task in tasks:
         if not task.get('parent_reference'):
             # Find best matching story
@@ -251,17 +285,26 @@ def organize_work_items_intelligently(work_items_data: List[Dict[str, Any]], pro
             if best_story_title:
                 task['parent_reference'] = best_story_title
                 stats['assigned_relationships'] += 1
+                tasks_assigned += 1
+                logger.info(f"   🔗 Linked task '{task['title'][:40]}...' to story '{best_story_title[:40]}...'")
             else:
                 # Assign to first available story
                 if stories:
                     task['parent_reference'] = stories[0]['title']
                     stats['assigned_relationships'] += 1
+                    tasks_assigned += 1
+                    logger.info(f"   🔗 Assigned task '{task['title'][:40]}...' to first available story")
                 else:
                     stats['orphaned_items'] += 1
+                    logger.warning(f"   ⚠️ Task '{task['title'][:40]}...' remains orphaned - no stories available")
         
         organized_items.append(task)
     
+    logger.info(f"   ✅ Successfully assigned {tasks_assigned} tasks to stories")
+    
     # Step 5: Assign subtasks to tasks (or stories if no tasks)
+    logger.info("🔧 Processing subtasks and linking to tasks/stories...")
+    subtasks_assigned = 0
     for subtask in subtasks:
         if not subtask.get('parent_reference'):
             # Prefer tasks, then stories
@@ -271,15 +314,25 @@ def organize_work_items_intelligently(work_items_data: List[Dict[str, Any]], pro
                 if best_parent_title:
                     subtask['parent_reference'] = best_parent_title
                     stats['assigned_relationships'] += 1
+                    subtasks_assigned += 1
+                    parent_type = "task" if tasks else "story"
+                    logger.info(f"   🔗 Linked subtask '{subtask['title'][:40]}...' to {parent_type} '{best_parent_title[:40]}...'")
                 else:
                     subtask['parent_reference'] = potential_parents[0]['title']
                     stats['assigned_relationships'] += 1
+                    subtasks_assigned += 1
+                    parent_type = "task" if tasks else "story"
+                    logger.info(f"   🔗 Assigned subtask '{subtask['title'][:40]}...' to first available {parent_type}")
             else:
                 stats['orphaned_items'] += 1
+                logger.warning(f"   ⚠️ Subtask '{subtask['title'][:40]}...' remains orphaned - no tasks or stories available")
         
         organized_items.append(subtask)
     
+    logger.info(f"   ✅ Successfully assigned {subtasks_assigned} subtasks to parents")
+    
     # Step 6: Set order indices
+    logger.info("📋 Setting order indices for organized items...")
     priority_order = {'critical': 1, 'high': 2, 'medium': 3, 'low': 4}
     
     # Sort epics by priority
@@ -289,6 +342,8 @@ def organize_work_items_intelligently(work_items_data: List[Dict[str, Any]], pro
     for i, epic in enumerate(epics_in_organized):
         epic['order_index'] = i + 1
     
+    logger.info(f"   📖 Ordered {len(epics_in_organized)} epics by priority")
+    
     # Sort other items within their parent groups
     parent_children_map = defaultdict(list)
     for item in organized_items:
@@ -297,15 +352,24 @@ def organize_work_items_intelligently(work_items_data: List[Dict[str, Any]], pro
             if parent_ref:
                 parent_children_map[parent_ref].append(item)
     
+    relationships_ordered = 0
     for parent_title, children in parent_children_map.items():
         children.sort(key=lambda x: (priority_order.get(x.get('priority', 'medium'), 5), x.get('title', '')))
         for i, child in enumerate(children):
             child['order_index'] = i + 1
+            relationships_ordered += 1
+    
+    logger.info(f"   🔗 Ordered {relationships_ordered} child items within their parent groups")
     
     # Set order_index to 1 for items without parents (except epics)
+    orphaned_ordered = 0
     for item in organized_items:
         if item.get('type') != 'epic' and 'order_index' not in item:
             item['order_index'] = 1
+            orphaned_ordered += 1
+    
+    if orphaned_ordered > 0:
+        logger.info(f"   ⚠️ Set default order for {orphaned_ordered} orphaned items")
     
     stats['final_counts'] = {
         'epics': len([item for item in organized_items if item.get('type') == 'epic']),
@@ -313,5 +377,13 @@ def organize_work_items_intelligently(work_items_data: List[Dict[str, Any]], pro
         'tasks': len([item for item in organized_items if item.get('type') == 'task']),
         'subtasks': len([item for item in organized_items if item.get('type') == 'subtask'])
     }
+    
+    # Log final organization summary
+    logger.info(f"🎯 Organization completed for {file_name or 'project'}:")
+    logger.info(f"   📊 Final counts: {stats['final_counts']['epics']} epics, {stats['final_counts']['stories']} stories, {stats['final_counts']['tasks']} tasks, {stats['final_counts']['subtasks']} subtasks")
+    logger.info(f"   ➕ Created {stats['created_epics']} new epics")
+    logger.info(f"   🔗 Established {stats['assigned_relationships']} parent-child relationships")
+    logger.info(f"   ⚠️ {stats['orphaned_items']} items remain orphaned")
+    logger.info(f"   🏷️ Categories used: {', '.join(set(stats['categories_used']))}")
     
     return organized_items, stats

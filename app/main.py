@@ -3,6 +3,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import auth, projects, health, files, ai_jobs, work_items
 from app.core.config import settings
 
+# Import all models to ensure proper SQLAlchemy relationship configuration
+from app.db import base  # This imports all models in the correct order
+
 # Create FastAPI application
 app = FastAPI(
     title="Task Generator API",

@@ -6,12 +6,10 @@ from sqlalchemy.orm import Session
 from app.core.celery_app import celery_app
 from app.db.session import SessionLocal
 
-# Import models in the correct order to avoid relationship issues
-from app.db.models.user import User
-from app.db.models.project import Project
-from app.db.models.file import File
-from app.db.models.work_item import WorkItem
+# Import all models to ensure proper relationship configuration
+from app.db.base import *
 from app.db.models.ai_job import AIJob, JobStatus
+from app.db.models.file import File
 
 from app.services.ai import AIParser
 from app.services.work_item import WorkItemService
@@ -80,17 +78,24 @@ def process_ai_job(self, job_id: str):
             db.commit()
             return {"status": "failed", "error": str(e)}
         
-        # Parse content with AI
-        logger.info(f"Processing text with AI for job {job_id}")
+        # Parse content with AI using two-pass approach
+        logger.info(f"Processing text with AI for job {job_id} using two-pass approach")
         ai_job.progress = 60
         db.commit()
         
         try:
             ai_service = AIParser()
-            parsed_results = ai_service.parse_requirements_document(text_content)
+            # Use the new two-pass parsing method
+            parsed_results = ai_service.parse_requirements_document_two_pass(text_content)
             
             if not parsed_results:
                 raise ValueError("AI parsing returned no results")
+            
+            # Log the two-pass results
+            total_work_items = sum(len(result.get("work_items", [])) for result in parsed_results)
+            logger.info(f"📊 Two-pass parsing completed for {file_record.file_name}:")
+            logger.info(f"   📄 Generated {len(parsed_results)} result sections")
+            logger.info(f"   📊 Total work items: {total_work_items}")
                 
         except Exception as e:
             logger.error(f"AI parsing failed for job {job_id}: {str(e)}")
@@ -106,17 +111,32 @@ def process_ai_job(self, job_id: str):
             return {"status": "failed", "error": str(e)}
         
         # Create work items
-        logger.info(f"Creating work items for job {job_id}")
+        logger.info(f"Creating work items for job {job_id} from file: {file_record.file_name}")
         ai_job.progress = 80
         db.commit()
         
         try:
             work_items = WorkItemService.create_work_items_with_hierarchy(
-                db, parsed_results, ai_job.project_id
+                db, parsed_results, ai_job.project_id, file_record.file_name
             )
             
             if not work_items:
                 raise ValueError("No work items were created")
+            
+            # Log detailed breakdown of created work items
+            type_breakdown = {
+                'epics': len([item for item in work_items if item.item_type.value == 'epic']),
+                'stories': len([item for item in work_items if item.item_type.value == 'story']),
+                'tasks': len([item for item in work_items if item.item_type.value == 'task']),
+                'subtasks': len([item for item in work_items if item.item_type.value == 'subtask'])
+            }
+            
+            logger.info(f"📊 Work items created for file '{file_record.file_name}':")
+            logger.info(f"   📖 Epics: {type_breakdown['epics']}")
+            logger.info(f"   📝 Stories: {type_breakdown['stories']}")
+            logger.info(f"   ⚡ Tasks: {type_breakdown['tasks']}")
+            logger.info(f"   🔧 Subtasks: {type_breakdown['subtasks']}")
+            logger.info(f"   📊 Total: {len(work_items)} work items")
                 
         except Exception as e:
             logger.error(f"Work item creation failed for job {job_id}: {str(e)}")
@@ -128,17 +148,29 @@ def process_ai_job(self, job_id: str):
         # Update job with completion
         ai_job.status = JobStatus.DONE
         ai_job.progress = 100
-        # Note: result field doesn't exist in current schema, so storing in error_message for now
-        ai_job.error_message = f"COMPLETED: Created {len(work_items)} work items from {len(parsed_results)} sections"
+        
+        # Create detailed completion message with breakdown
+        type_breakdown = {
+            'epics': len([item for item in work_items if item.item_type.value == 'epic']),
+            'stories': len([item for item in work_items if item.item_type.value == 'story']),
+            'tasks': len([item for item in work_items if item.item_type.value == 'task']),
+            'subtasks': len([item for item in work_items if item.item_type.value == 'subtask'])
+        }
+        
+        completion_message = f"COMPLETED: Created {len(work_items)} work items from {len(parsed_results)} sections of file '{file_record.file_name}'. Breakdown: {type_breakdown['epics']} epics, {type_breakdown['stories']} stories, {type_breakdown['tasks']} tasks, {type_breakdown['subtasks']} subtasks"
+        ai_job.error_message = completion_message
         db.commit()
         
-        logger.info(f"Successfully completed AI job {job_id}, created {len(work_items)} work items")
+        logger.info(f"✅ Successfully completed AI job {job_id} for file '{file_record.file_name}'")
+        logger.info(f"📊 Final results: {completion_message}")
         
         return {
             "status": "done",
             "job_id": job_id,
+            "file_name": file_record.file_name,
             "work_items_created": len(work_items),
-            "parsed_sections": len(parsed_results)
+            "parsed_sections": len(parsed_results),
+            "type_breakdown": type_breakdown
         }
         
     except Exception as e:

@@ -20,6 +20,26 @@ class WorkItemCreate(BaseModel):
     parent_reference: Optional[str] = Field(default=None, description="Reference to parent item title for subtasks/tasks")
 
 
+class ConsolidatedEpic(BaseModel):
+    title: str = Field(..., min_length=10, max_length=100, description="Business-friendly epic title")
+    description: str = Field(..., min_length=50, max_length=1000, description="Comprehensive epic description")
+    category: str = Field(..., description="Business domain category")
+    priority: str = Field(default="medium", pattern="^(low|medium|high|critical)$", description="Priority level")
+    acceptance_criteria: List[str] = Field(default_factory=list, description="High-level business outcomes")
+    consolidated_requirements: List[str] = Field(default_factory=list, description="Original requirements merged into this epic")
+
+
+class EpicConsolidationResult(BaseModel):
+    consolidated_epics: List[ConsolidatedEpic] = Field(default_factory=list, description="List of consolidated epics")
+    summary: str = Field(..., min_length=10, max_length=500, description="Consolidation overview")
+
+
+class EpicBreakdownResult(BaseModel):
+    work_items: List[WorkItemCreate] = Field(default_factory=list, description="Detailed work items from epic breakdown")
+    epic_title: str = Field(..., description="Title of epic being broken down")
+    summary: str = Field(..., min_length=10, max_length=500, description="Breakdown overview")
+
+
 class ParsedRequirements(BaseModel):
     work_items: List[WorkItemCreate] = Field(default_factory=list, description="List of parsed work items")
     summary: str = Field(..., min_length=10, max_length=500, description="Brief summary of requirements")
@@ -55,33 +75,163 @@ class AIParser:
         # Initialize OpenAI as final fallback
         self.openai_client = OpenAI(api_key=getattr(settings, 'openai_api_key', '')) if hasattr(settings, 'openai_api_key') else None
     
+    def _create_epic_consolidation_prompt(self) -> str:
+        """Create system prompt for first pass: extracting and consolidating epics."""
+        return """You are a professional business analyst tasked with identifying and consolidating high-level features (epics) from software requirements documents.
+
+CRITICAL INSTRUCTIONS FOR EPIC CONSOLIDATION:
+1. ONLY extract information that is explicitly stated in the provided document.
+2. Group SIMILAR or RELATED requirements into unified, logical epics.
+3. Minimize fragmentation - combine related features under broader epics.
+4. Focus on business value and user-facing capabilities.
+5. Each epic should represent a significant feature area (weeks/months of work).
+6. Aim for 8-15 consolidated epics maximum.
+
+CONSOLIDATION RULES:
+1. Merge similar features (e.g., "Chat Service" + "Video Chat" = "Customer Communication")
+2. Group by business domain (e.g., all authentication features under "User Management")
+3. Combine related technical features (e.g., all payment features under "Payment System")
+4. Use clear, business-friendly epic titles
+5. Include comprehensive descriptions covering all merged requirements
+
+EPIC CATEGORIES TO CONSIDER:
+- User Management & Authentication
+- Product Catalog & Search  
+- Payment & Financial Services
+- Order Management & Processing
+- Customer Service & Support
+- Content Management
+- Reporting & Analytics
+- Integration & API Services
+- Mobile & Responsive Features
+- Security & Compliance
+
+OUTPUT FORMAT:
+Return ONLY a valid JSON object:
+
+{
+  "consolidated_epics": [
+    {
+      "title": "string (10-100 chars, business-friendly)",
+      "description": "string (50-1000 chars, comprehensive coverage)",
+      "category": "string (business domain)",
+      "priority": "low|medium|high|critical",
+      "acceptance_criteria": ["high-level business outcomes"],
+      "consolidated_requirements": ["list of original requirements merged into this epic"]
+    }
+  ],
+  "summary": "string (consolidation overview)"
+}
+
+REMEMBER: Focus on consolidation and minimizing fragmentation. Each epic should be substantial and meaningful."""
+
+    def _create_epic_breakdown_prompt(self) -> str:
+        """Create system prompt for second pass: breaking epics into detailed work items."""
+        return """You are a professional business analyst tasked with breaking down epics into detailed user stories, tasks, and subtasks.
+
+CRITICAL INSTRUCTIONS FOR EPIC BREAKDOWN:
+1. Break down the provided epic into actionable user stories (3-8 stories per epic).
+2. For each story, create implementation tasks (2-5 tasks per story).
+3. For complex tasks, add subtasks (1-3 subtasks per task).
+4. Maintain clear parent-child relationships.
+5. Ensure each work item is actionable and testable.
+6. Keep the total breakdown minimal but complete.
+
+BREAKDOWN RULES:
+1. Stories should deliver user value and be testable.
+2. Tasks should be technical implementation steps.
+3. Subtasks should be granular development work (2-8 hours).
+4. Use exact parent titles for parent_reference.
+5. Prioritize based on business value and dependencies.
+
+WORK ITEM TYPES:
+- Story: User-facing functionality delivering business value (1-3 weeks)
+- Task: Technical implementation work (3-10 days)
+- Subtask: Granular development work (2-8 hours)
+
+OUTPUT FORMAT:
+Return ONLY a valid JSON object:
+
+{
+  "work_items": [
+    {
+      "title": "string (5-150 chars)",
+      "description": "string (20-1000 chars)",
+      "type": "story|task|subtask",
+      "priority": "low|medium|high|critical",
+      "acceptance_criteria": ["specific, testable criteria"],
+      "estimated_hours": null or number,
+      "parent_reference": null or "exact parent title"
+    }
+  ],
+  "epic_title": "string (title of epic being broken down)",
+  "summary": "string (breakdown overview)"
+}
+
+REMEMBER: Keep breakdown minimal but complete. Each work item should be actionable."""
+
+    def _create_epic_consolidation_user_prompt(self, text_chunk: str) -> str:
+        """Create user prompt for epic consolidation."""
+        return f"""Analyze the following requirements text and extract consolidated epics.
+
+REQUIREMENTS TEXT:
+{text_chunk}
+
+Identify and consolidate similar requirements into unified epics. Focus on minimizing fragmentation and grouping related features. Return ONLY valid JSON matching the consolidation schema."""
+
+    def _create_epic_breakdown_user_prompt(self, epic_data: Dict[str, Any], original_text: str) -> str:
+        """Create user prompt for breaking down an epic into detailed work items."""
+        epic_title = epic_data.get('title', '')
+        epic_description = epic_data.get('description', '')
+        consolidated_requirements = epic_data.get('consolidated_requirements', [])
+        
+        requirements_text = "\n".join([f"- {req}" for req in consolidated_requirements])
+        
+        return f"""Break down the following epic into detailed user stories, tasks, and subtasks.
+
+EPIC TO BREAK DOWN:
+Title: {epic_title}
+Description: {epic_description}
+
+ORIGINAL REQUIREMENTS COVERED:
+{requirements_text}
+
+RELEVANT CONTEXT FROM ORIGINAL DOCUMENT:
+{original_text[:2000]}...
+
+Break this epic into actionable user stories (3-8 stories), then tasks for each story (2-5 tasks), and subtasks where needed (1-3 subtasks). Keep the breakdown minimal but complete. Return ONLY valid JSON matching the breakdown schema."""
+
     def _create_system_prompt(self) -> str:
-        """Create detailed system prompt to prevent hallucination."""
+        """Create detailed system prompt to prevent hallucination (legacy method for compatibility)."""
         return """You are a professional business analyst tasked with parsing software requirements documents into structured work items.
 
 CRITICAL INSTRUCTIONS:
-1. ONLY extract information that is EXPLICITLY stated in the provided text
-2. DO NOT add features, assumptions, or interpretations beyond what is written
-3. DO NOT create work items for standard software practices unless explicitly mentioned
-4. If information is unclear or missing, use "TBD" or leave optional fields empty
-5. Maintain the hierarchy: Epics contain Stories, Stories contain Tasks, Tasks may have Subtasks
+1. ONLY extract information that is explicitly stated in the provided document.
+2. DO NOT add features, assumptions, or interpretations beyond what is written.
+3. DO NOT create work items for standard software practices unless explicitly mentioned.
+4. If information is unclear or missing, use "TBD" or leave the field empty.
+5. Maintain hierarchy exactly as stated:
+   - Epic → Story → Task → Subtask.
+   - If the document does not mention stories, tasks, or subtasks, stop at the highest available level.
+6. Use exact wording from the document wherever possible.
 
 WORK ITEM TYPES:
-- Epic: Large feature or capability spanning multiple stories (weeks/months)
-- Story: User-facing functionality that delivers business value (days/weeks)  
-- Task: Technical implementation work that supports a story (hours/days)
-- Subtask: Granular work within a task (hours)
+- Epic: Large feature spanning multiple stories (weeks/months).
+- Story: User-facing functionality (days/weeks).
+- Task: Technical implementation (hours/days).
+- Subtask: Granular work within a task (hours).
 
 PARSING RULES:
-1. Look for explicit functional requirements, not implementation details
-2. Group related functionality into logical epics and stories
-3. Only create tasks for explicitly mentioned technical work
-4. Acceptance criteria must be based on stated requirements
-5. Estimate hours only if time/effort is explicitly mentioned
-6. Use exact wording from document when possible
+1. Look only for explicit functional requirements.
+2. Group related functionality into logical epics.
+3. Do not create tasks/stories unless they are explicitly written.
+4. Acceptance criteria must be measurable and based on explicit text only.
+5. If effort or time is not explicitly given, set estimated_hours = null.
+6. Parent references must exactly match the title of the parent item.
 
-REQUIRED OUTPUT FORMAT: 
-You MUST return ONLY a valid JSON object with this EXACT structure:
+OUTPUT FORMAT:
+Return ONLY a valid JSON object in this exact structure:
+
 {
   "work_items": [
     {
@@ -98,19 +248,16 @@ You MUST return ONLY a valid JSON object with this EXACT structure:
 }
 
 VALIDATION REQUIREMENTS:
-- Each work item must have a clear, descriptive title (5-200 chars)
-- Descriptions must be detailed and specific (10-2000 chars)
-- Type must be exactly: "epic", "story", "task", or "subtask"
-- Priority must be exactly: "low", "medium", "high", or "critical"
-- Parent references must match exact titles of parent items
-- Acceptance criteria should be measurable and testable
-- Do NOT include any text outside the JSON object
-- Ensure the JSON is valid and properly formatted
+- Do NOT output anything outside the JSON.
+- Every parent_reference must match exactly or be null.
+- If only epics are present, return only epics.
+- Ensure JSON is valid and properly formatted.
 
-Remember: Quality over quantity. It's better to create fewer, well-defined work items than many vague ones."""
+REMEMBER: Quality over quantity. Return fewer, well-defined items rather than many vague ones.
+"""
 
     def _create_user_prompt(self, text_chunk: str) -> str:
-        """Create user prompt with the text to analyze."""
+        """Create user prompt with the text to analyze (legacy method for compatibility)."""
         return f"""Analyze the following requirements text and extract work items according to the system instructions.
 
 REQUIREMENTS TEXT:
@@ -271,6 +418,70 @@ Parse this text into structured work items. Return ONLY valid JSON matching the 
             print(f"Response type: {type(response_text)}")
             print(f"Response content (first 500 chars): {str(response_text)[:500]}")
             raise ValueError(f"Failed to parse AI response: {str(e)}")
+
+    def _validate_epic_consolidation_response(self, response_text: str) -> Dict[str, Any]:
+        """Validate and clean epic consolidation response."""
+        try:
+            cleaned_response = self._clean_json_response(response_text)
+            parsed_data = json.loads(cleaned_response)
+            
+            # Handle various response structures
+            if 'consolidated_epics' not in parsed_data:
+                if 'epics' in parsed_data:
+                    parsed_data['consolidated_epics'] = parsed_data['epics']
+                    del parsed_data['epics']
+                elif isinstance(parsed_data, list):
+                    parsed_data = {
+                        'consolidated_epics': parsed_data,
+                        'summary': 'Epic consolidation completed'
+                    }
+                else:
+                    raise ValueError("Response missing 'consolidated_epics' field")
+            
+            if 'summary' not in parsed_data:
+                parsed_data['summary'] = 'Epic consolidation completed'
+            
+            # Validate with Pydantic
+            validated_data = EpicConsolidationResult(**parsed_data)
+            return validated_data.dict()
+            
+        except (json.JSONDecodeError, ValidationError) as e:
+            print(f"Epic consolidation parse error: {str(e)}")
+            print(f"Raw response: {response_text[:1000]}")
+            raise ValueError(f"Invalid epic consolidation response: {str(e)}")
+
+    def _validate_epic_breakdown_response(self, response_text: str) -> Dict[str, Any]:
+        """Validate and clean epic breakdown response."""
+        try:
+            cleaned_response = self._clean_json_response(response_text)
+            parsed_data = json.loads(cleaned_response)
+            
+            # Handle various response structures
+            if 'work_items' not in parsed_data:
+                if isinstance(parsed_data, list):
+                    parsed_data = {
+                        'work_items': self._normalize_work_items(parsed_data),
+                        'epic_title': 'Unknown Epic',
+                        'summary': 'Epic breakdown completed'
+                    }
+                else:
+                    raise ValueError("Response missing 'work_items' field")
+            else:
+                parsed_data['work_items'] = self._normalize_work_items(parsed_data['work_items'])
+            
+            if 'epic_title' not in parsed_data:
+                parsed_data['epic_title'] = 'Unknown Epic'
+            if 'summary' not in parsed_data:
+                parsed_data['summary'] = 'Epic breakdown completed'
+            
+            # Validate with Pydantic
+            validated_data = EpicBreakdownResult(**parsed_data)
+            return validated_data.dict()
+            
+        except (json.JSONDecodeError, ValidationError) as e:
+            print(f"Epic breakdown parse error: {str(e)}")
+            print(f"Raw response: {response_text[:1000]}")
+            raise ValueError(f"Invalid epic breakdown response: {str(e)}")
 
     def _normalize_work_items(self, work_items: List[Any]) -> List[Dict[str, Any]]:
         """Normalize work items from various AI model response formats."""
@@ -494,6 +705,284 @@ Parse this text into structured work items. Return ONLY valid JSON matching the 
             'work_items': [],
             'summary': f"No work items could be extracted from chunk {chunk_index + 1} - all AI services failed"
         }
+
+    def _call_ai_for_epic_consolidation(self, user_prompt: str) -> str:
+        """Call AI services for epic consolidation with fallback."""
+        errors = []
+        
+        # Try Gemini models first
+        if self.gemini_available:
+            try:
+                if not self.gemini_available:
+                    raise Exception("Gemini API not configured")
+                
+                full_prompt = f"{self._create_epic_consolidation_prompt()}\n\n{user_prompt}"
+                
+                for model_name in self.gemini_models:
+                    try:
+                        model = genai.GenerativeModel(model_name)
+                        response = model.generate_content(
+                            full_prompt,
+                            generation_config=genai.types.GenerationConfig(
+                                temperature=0.1,
+                                top_p=0.8,
+                                top_k=40,
+                                max_output_tokens=4000,
+                            )
+                        )
+                        return response.text
+                    except Exception as e:
+                        if self._is_quota_exceeded(str(e)):
+                            continue
+                        else:
+                            continue
+                raise Exception("All Gemini models failed")
+            except Exception as gemini_error:
+                errors.append(f"Gemini failed: {gemini_error}")
+        
+        # Try OpenRouter models
+        if self.openrouter_available:
+            try:
+                headers = {
+                    "Authorization": f"Bearer {settings.openrouter_api_key}",
+                    "Content-Type": "application/json"
+                }
+                
+                for model_name in self.openrouter_models:
+                    try:
+                        payload = {
+                            "model": model_name,
+                            "messages": [
+                                {"role": "system", "content": self._create_epic_consolidation_prompt()},
+                                {"role": "user", "content": user_prompt}
+                            ],
+                            "temperature": 0.1,
+                            "max_tokens": 4000,
+                            "top_p": 0.8
+                        }
+                        
+                        response = requests.post(
+                            "https://openrouter.ai/api/v1/chat/completions",
+                            headers=headers,
+                            json=payload,
+                            timeout=60
+                        )
+                        
+                        if response.status_code == 200:
+                            result = response.json()
+                            return result["choices"][0]["message"]["content"]
+                        elif response.status_code in [429, 403]:
+                            continue
+                        else:
+                            continue
+                    except Exception:
+                        continue
+                raise Exception("All OpenRouter models failed")
+            except Exception as openrouter_error:
+                errors.append(f"OpenRouter failed: {openrouter_error}")
+        
+        # Final fallback to OpenAI
+        if self.openai_client:
+            try:
+                response = self.openai_client.chat.completions.create(
+                    model="gpt-4",
+                    messages=[
+                        {"role": "system", "content": self._create_epic_consolidation_prompt()},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    temperature=0.1,
+                    max_tokens=4000,
+                    top_p=0.8
+                )
+                return response.choices[0].message.content
+            except Exception as openai_error:
+                errors.append(f"OpenAI failed: {openai_error}")
+        
+        raise Exception(f"All AI services failed for epic consolidation: {'; '.join(errors)}")
+
+    def _call_ai_for_epic_breakdown(self, user_prompt: str) -> str:
+        """Call AI services for epic breakdown with fallback."""
+        errors = []
+        
+        # Try Gemini models first
+        if self.gemini_available:
+            try:
+                full_prompt = f"{self._create_epic_breakdown_prompt()}\n\n{user_prompt}"
+                
+                for model_name in self.gemini_models:
+                    try:
+                        model = genai.GenerativeModel(model_name)
+                        response = model.generate_content(
+                            full_prompt,
+                            generation_config=genai.types.GenerationConfig(
+                                temperature=0.1,
+                                top_p=0.8,
+                                top_k=40,
+                                max_output_tokens=4000,
+                            )
+                        )
+                        return response.text
+                    except Exception as e:
+                        if self._is_quota_exceeded(str(e)):
+                            continue
+                        else:
+                            continue
+                raise Exception("All Gemini models failed")
+            except Exception as gemini_error:
+                errors.append(f"Gemini failed: {gemini_error}")
+        
+        # Try OpenRouter models
+        if self.openrouter_available:
+            try:
+                headers = {
+                    "Authorization": f"Bearer {settings.openrouter_api_key}",
+                    "Content-Type": "application/json"
+                }
+                
+                for model_name in self.openrouter_models:
+                    try:
+                        payload = {
+                            "model": model_name,
+                            "messages": [
+                                {"role": "system", "content": self._create_epic_breakdown_prompt()},
+                                {"role": "user", "content": user_prompt}
+                            ],
+                            "temperature": 0.1,
+                            "max_tokens": 4000,
+                            "top_p": 0.8
+                        }
+                        
+                        response = requests.post(
+                            "https://openrouter.ai/api/v1/chat/completions",
+                            headers=headers,
+                            json=payload,
+                            timeout=60
+                        )
+                        
+                        if response.status_code == 200:
+                            result = response.json()
+                            return result["choices"][0]["message"]["content"]
+                        elif response.status_code in [429, 403]:
+                            continue
+                        else:
+                            continue
+                    except Exception:
+                        continue
+                raise Exception("All OpenRouter models failed")
+            except Exception as openrouter_error:
+                errors.append(f"OpenRouter failed: {openrouter_error}")
+        
+        # Final fallback to OpenAI
+        if self.openai_client:
+            try:
+                response = self.openai_client.chat.completions.create(
+                    model="gpt-4",
+                    messages=[
+                        {"role": "system", "content": self._create_epic_breakdown_prompt()},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    temperature=0.1,
+                    max_tokens=4000,
+                    top_p=0.8
+                )
+                return response.choices[0].message.content
+            except Exception as openai_error:
+                errors.append(f"OpenAI failed: {openai_error}")
+        
+        raise Exception(f"All AI services failed for epic breakdown: {'; '.join(errors)}")
+
+    def consolidate_epics_from_text(self, text: str) -> Dict[str, Any]:
+        """First pass: Extract and consolidate epics from requirements text."""
+        if not text.strip():
+            raise ValueError("Empty text provided")
+        
+        user_prompt = self._create_epic_consolidation_user_prompt(text)
+        
+        try:
+            response = self._call_ai_for_epic_consolidation(user_prompt)
+            return self._validate_epic_consolidation_response(response)
+        except Exception as e:
+            print(f"Epic consolidation failed: {str(e)}")
+            # Return empty result instead of raising
+            return {
+                'consolidated_epics': [],
+                'summary': f"Epic consolidation failed: {str(e)}"
+            }
+
+    def breakdown_epic_to_work_items(self, epic_data: Dict[str, Any], original_text: str) -> Dict[str, Any]:
+        """Second pass: Break down an epic into detailed work items."""
+        if not epic_data:
+            raise ValueError("Empty epic data provided")
+        
+        user_prompt = self._create_epic_breakdown_user_prompt(epic_data, original_text)
+        
+        try:
+            response = self._call_ai_for_epic_breakdown(user_prompt)
+            return self._validate_epic_breakdown_response(response)
+        except Exception as e:
+            print(f"Epic breakdown failed for epic '{epic_data.get('title', 'Unknown')}': {str(e)}")
+            # Return empty result instead of raising
+            return {
+                'work_items': [],
+                'epic_title': epic_data.get('title', 'Unknown Epic'),
+                'summary': f"Epic breakdown failed: {str(e)}"
+            }
+
+    def parse_requirements_document_two_pass(self, text: str) -> List[Dict[str, Any]]:
+        """Parse requirements document using two-pass approach: consolidate epics, then break them down."""
+        if not text.strip():
+            raise ValueError("Empty document provided")
+        
+        print("🎯 Starting two-pass AI parsing...")
+        
+        # Pass 1: Consolidate epics
+        print("📋 Pass 1: Consolidating epics...")
+        epic_consolidation_result = self.consolidate_epics_from_text(text)
+        consolidated_epics = epic_consolidation_result.get('consolidated_epics', [])
+        
+        if not consolidated_epics:
+            print("⚠️ No epics consolidated, falling back to single-pass approach")
+            return self.parse_requirements_document(text)
+        
+        print(f"✅ Consolidated {len(consolidated_epics)} epics: {[epic['title'] for epic in consolidated_epics]}")
+        
+        # Pass 2: Break down each epic
+        print("🔧 Pass 2: Breaking down epics into detailed work items...")
+        all_results = []
+        
+        # First add the consolidated epics themselves
+        epic_work_items = []
+        for epic in consolidated_epics:
+            epic_work_item = {
+                'title': epic['title'],
+                'description': epic['description'],
+                'type': 'epic',
+                'priority': epic.get('priority', 'medium'),
+                'acceptance_criteria': epic.get('acceptance_criteria', []),
+                'estimated_hours': None,
+                'parent_reference': None
+            }
+            epic_work_items.append(epic_work_item)
+        
+        # Add epic result
+        all_results.append({
+            'work_items': epic_work_items,
+            'summary': f"Consolidated {len(epic_work_items)} epics from requirements"
+        })
+        
+        # Break down each epic
+        for i, epic in enumerate(consolidated_epics):
+            print(f"   🔨 Breaking down epic {i+1}/{len(consolidated_epics)}: '{epic['title']}'")
+            breakdown_result = self.breakdown_epic_to_work_items(epic, text)
+            
+            if breakdown_result.get('work_items'):
+                all_results.append(breakdown_result)
+                print(f"      ✅ Generated {len(breakdown_result['work_items'])} work items")
+            else:
+                print(f"      ⚠️ No work items generated for this epic")
+        
+        print(f"🎉 Two-pass parsing completed: {len(all_results)} result sections")
+        return all_results
 
     def chunk_text(self, text: str, max_chunk_size: int = 3000) -> List[str]:
         """Split text into manageable chunks for AI processing."""

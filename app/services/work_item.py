@@ -1,4 +1,5 @@
 import json
+import logging
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 from sqlalchemy.orm import Session
@@ -7,6 +8,10 @@ from fastapi import HTTPException, status
 from app.db.models.work_item import WorkItem, ItemType, ItemStatus, ItemPriority
 from app.schemas.work_item import WorkItemCreate, WorkItemUpdate
 from app.utils.hierarchy_manager import organize_work_items_intelligently
+
+# Set up logging for work item service
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 
 class WorkItemService:
@@ -48,41 +53,61 @@ class WorkItemService:
     def create_work_items_with_hierarchy(
         db: Session, 
         parsed_results: List[Dict[str, Any]], 
-        project_id: UUID
+        project_id: UUID,
+        file_name: str = None
     ) -> List[WorkItem]:
         """Create work items with intelligent automatic hierarchy."""
-        print("🤖 Creating work items with intelligent hierarchy...")
+        logger.info(f"🤖 Creating work items with intelligent hierarchy for project {project_id}" + (f" from file: {file_name}" if file_name else ""))
         
         # Collect all work items from all parsed results
         all_work_items = []
-        for result in parsed_results:
+        for i, result in enumerate(parsed_results):
             work_items = result.get("work_items", [])
             all_work_items.extend(work_items)
+            logger.info(f"   📄 Section {i+1}: Found {len(work_items)} work items")
         
         if not all_work_items:
-            print("⚠️ No work items found in parsed results")
+            logger.warning("⚠️ No work items found in parsed results")
             return []
         
-        print(f"📊 Processing {len(all_work_items)} work items for intelligent organization...")
+        logger.info(f"📊 Processing {len(all_work_items)} total work items for intelligent organization...")
+        
+        # Log breakdown by type before organization
+        type_counts = {
+            'epic': len([item for item in all_work_items if item.get('type') == 'epic']),
+            'story': len([item for item in all_work_items if item.get('type') == 'story']),
+            'task': len([item for item in all_work_items if item.get('type') == 'task']),
+            'subtask': len([item for item in all_work_items if item.get('type') == 'subtask'])
+        }
+        logger.info(f"📊 Original AI-generated breakdown: {type_counts['epic']} epics, {type_counts['story']} stories, {type_counts['task']} tasks, {type_counts['subtask']} subtasks")
         
         # Step 1: Intelligently organize work items into proper hierarchy
-        organized_items, organization_stats = organize_work_items_intelligently(all_work_items, project_id)
+        organized_items, organization_stats = organize_work_items_intelligently(all_work_items, project_id, file_name)
         
-        print(f"✨ Organization completed:")
-        print(f"   📁 Created {organization_stats['created_epics']} new epics")
-        print(f"   🔗 Assigned {organization_stats['assigned_relationships']} parent-child relationships") 
-        print(f"   ⚠️ {organization_stats['orphaned_items']} items remain orphaned")
+        logger.info(f"✨ Organization completed:")
+        logger.info(f"   📁 Created {organization_stats['created_epics']} new epics")
+        logger.info(f"   🔗 Assigned {organization_stats['assigned_relationships']} parent-child relationships") 
+        logger.info(f"   ⚠️ {organization_stats['orphaned_items']} items remain orphaned")
+        
+        # Log detailed final breakdown
+        final_counts = organization_stats['final_counts']
+        logger.info(f"📊 Final organized breakdown: {final_counts['epics']} epics, {final_counts['stories']} stories, {final_counts['tasks']} tasks, {final_counts['subtasks']} subtasks")
         
         # Step 2: Create work items in database with proper relationships
+        logger.info("💾 Creating work items in database...")
         created_items = []
         title_to_item_map = {}
         
         # First pass: Create all items without parent relationships
+        creation_stats = {'epics': 0, 'stories': 0, 'tasks': 0, 'subtasks': 0, 'failed': 0}
         for item_data in organized_items:
             try:
                 work_item = WorkItemService.create_work_item_from_ai(db, item_data, project_id)
                 created_items.append(work_item)
                 title_to_item_map[work_item.title] = work_item
+                
+                # Track creation stats
+                creation_stats[work_item.item_type.value + 's'] += 1
                 
                 # Add category information to work item if available
                 if '_category' in item_data:
@@ -90,11 +115,18 @@ class WorkItemService:
                     work_item.description = f"{work_item.description}\n\n[Auto-categorized: {item_data['_category']}]"
                 
             except Exception as e:
-                print(f"❌ Failed to create work item '{item_data.get('title', 'Unknown')}': {str(e)}")
+                creation_stats['failed'] += 1
+                logger.error(f"❌ Failed to create work item '{item_data.get('title', 'Unknown')}': {str(e)}")
                 continue
         
+        logger.info(f"📊 Database creation results: {creation_stats['epics']} epics, {creation_stats['stories']} stories, {creation_stats['tasks']} tasks, {creation_stats['subtasks']} subtasks created")
+        if creation_stats['failed'] > 0:
+            logger.warning(f"⚠️ {creation_stats['failed']} work items failed to create")
+        
         # Second pass: Set parent relationships based on organized hierarchy
+        logger.info("🔗 Establishing parent-child relationships in database...")
         relationships_created = 0
+        relationships_failed = 0
         for item_data in organized_items:
             item_title = item_data.get("title")
             parent_reference = item_data.get("parent_reference")
@@ -107,18 +139,21 @@ class WorkItemService:
                 if parent_item:
                     child_item.parent_id = parent_item.id
                     relationships_created += 1
-                    print(f"🔗 Linked '{child_item.title[:40]}...' to parent '{parent_item.title[:40]}...'")
+                    logger.debug(f"🔗 Linked '{child_item.title[:40]}...' to parent '{parent_item.title[:40]}...'")
                 else:
-                    print(f"⚠️ Parent '{parent_reference}' not found for '{item_title}'")
+                    relationships_failed += 1
+                    logger.warning(f"⚠️ Parent '{parent_reference}' not found for '{item_title}'")
         
-        print(f"✅ Created {relationships_created} parent-child relationships in database")
+        logger.info(f"✅ Created {relationships_created} parent-child relationships in database")
+        if relationships_failed > 0:
+            logger.warning(f"⚠️ {relationships_failed} relationships failed to create")
         
         # Commit all changes
         try:
             db.commit()
-            print("💾 Database commit successful")
+            logger.info("💾 Database commit successful")
         except Exception as e:
-            print(f"❌ Database commit failed: {str(e)}")
+            logger.error(f"❌ Database commit failed: {str(e)}")
             db.rollback()
             raise
         
@@ -126,7 +161,15 @@ class WorkItemService:
         for item in created_items:
             db.refresh(item)
         
-        print(f"🎯 Successfully created {len(created_items)} work items with intelligent hierarchy")
+        # Log final summary
+        logger.info(f"🎯 Successfully created {len(created_items)} work items with intelligent hierarchy for {file_name or 'project'}")
+        logger.info(f"📈 Summary for {file_name or 'project'}:")
+        logger.info(f"   📖 Total Epics: {final_counts['epics']} ({organization_stats['created_epics']} auto-generated)")
+        logger.info(f"   📝 Total Stories: {final_counts['stories']}")
+        logger.info(f"   ⚡ Total Tasks: {final_counts['tasks']}")
+        logger.info(f"   🔧 Total Subtasks: {final_counts['subtasks']}")
+        logger.info(f"   🔗 Parent-child relationships: {relationships_created}")
+        logger.info(f"   🏷️ Categories used: {', '.join(set(organization_stats.get('categories_used', [])))}")
         
         return created_items
     
