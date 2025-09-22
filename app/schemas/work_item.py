@@ -12,7 +12,7 @@ class WorkItemBase(BaseModel):
     item_type: ItemType
     priority: ItemPriority = ItemPriority.MEDIUM
     acceptance_criteria: Optional[str] = None
-    estimated_hours: Optional[float] = None
+    estimated_hours: Optional[int] = None  # Changed to int to match database model
     order_index: int = 0
 
 
@@ -28,7 +28,7 @@ class WorkItemUpdate(BaseModel):
     priority: Optional[ItemPriority] = None
     status: Optional[ItemStatus] = None
     acceptance_criteria: Optional[str] = None
-    estimated_hours: Optional[float] = None
+    estimated_hours: Optional[int] = None  # Changed to int to match database model
     order_index: Optional[int] = None
     parent_id: Optional[UUID] = None
 

@@ -308,7 +308,7 @@ class WorkItemService:
         from app.db.models.project import Project
         project = db.query(Project).filter(
             Project.id == work_item_create.project_id,
-            Project.user_id == user_id
+            Project.owner_id == user_id
         ).first()
         
         if not project:
@@ -328,7 +328,7 @@ class WorkItemService:
             acceptance_criteria=work_item_create.acceptance_criteria,
             estimated_hours=work_item_create.estimated_hours,
             order_index=work_item_create.order_index,
-            status=ItemStatus.TODO
+            status=ItemStatus.IN_REVIEW
         )
         
         db.add(db_work_item)
@@ -347,7 +347,7 @@ class WorkItemService:
         
         work_item = db.query(WorkItem).join(Project).filter(
             WorkItem.id == work_item_id,
-            Project.user_id == user_id
+            Project.owner_id == user_id
         ).first()
         
         return work_item
