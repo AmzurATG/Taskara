@@ -1,14 +1,44 @@
 from docx import Document
+import requests
+import tempfile
+import os
 from typing import List, Dict, Any
 import re
 
 
 class DOCXExtractor:
     @staticmethod
-    def extract_text_from_docx(file_path: str) -> str:
-        """Extract text from DOCX file."""
+    def _download_file_from_url(url: str) -> str:
+        """Download file from URL and return temporary file path."""
         try:
-            doc = Document(file_path)
+            # Clean URL - remove any trailing characters
+            url = url.rstrip('?')
+            
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+            
+            # Create temporary file
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.docx')
+            temp_file.write(response.content)
+            temp_file.close()
+            
+            return temp_file.name
+        except Exception as e:
+            raise Exception(f"Error downloading file from URL: {str(e)}")
+    
+    @staticmethod
+    def extract_text_from_docx(file_path: str) -> str:
+        """Extract text from DOCX file (supports both local paths and URLs)."""
+        temp_file_path = None
+        try:
+            # Check if it's a URL
+            if file_path.startswith('http'):
+                temp_file_path = DOCXExtractor._download_file_from_url(file_path)
+                actual_file_path = temp_file_path
+            else:
+                actual_file_path = file_path
+            
+            doc = Document(actual_file_path)
             text = ""
             
             # Extract paragraphs
@@ -30,12 +60,28 @@ class DOCXExtractor:
         
         except Exception as e:
             raise Exception(f"Error extracting text from DOCX: {str(e)}")
+        
+        finally:
+            # Clean up temporary file if it was created
+            if temp_file_path and os.path.exists(temp_file_path):
+                try:
+                    os.unlink(temp_file_path)
+                except Exception:
+                    pass
     
     @staticmethod
     def extract_structured_content(file_path: str) -> Dict[str, Any]:
-        """Extract structured content from DOCX file."""
+        """Extract structured content from DOCX file (supports both local paths and URLs)."""
+        temp_file_path = None
         try:
-            doc = Document(file_path)
+            # Check if it's a URL
+            if file_path.startswith('http'):
+                temp_file_path = DOCXExtractor._download_file_from_url(file_path)
+                actual_file_path = temp_file_path
+            else:
+                actual_file_path = file_path
+            
+            doc = Document(actual_file_path)
             content = {
                 "paragraphs": [],
                 "tables": [],
@@ -78,10 +124,18 @@ class DOCXExtractor:
         
         except Exception as e:
             raise Exception(f"Error extracting structured content from DOCX: {str(e)}")
+        
+        finally:
+            # Clean up temporary file if it was created
+            if temp_file_path and os.path.exists(temp_file_path):
+                try:
+                    os.unlink(temp_file_path)
+                except Exception:
+                    pass
     
     @staticmethod
     def extract_by_sections(file_path: str) -> List[Dict[str, Any]]:
-        """Extract content organized by sections/headings."""
+        """Extract content organized by sections/headings (supports both local paths and URLs)."""
         try:
             structured_content = DOCXExtractor.extract_structured_content(file_path)
             sections = []

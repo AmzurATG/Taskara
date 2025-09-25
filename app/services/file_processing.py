@@ -92,6 +92,14 @@ class FileService:
         file_extension = Path(file.filename).suffix.lower()
         unique_filename = f"project_{project_id}/{uuid.uuid4()}{file_extension}"
         
+        # Determine content type
+        content_type_map = {
+            '.pdf': 'application/pdf',
+            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            '.doc': 'application/msword'
+        }
+        content_type = content_type_map.get(file_extension, 'application/octet-stream')
+        
         # Read file content
         try:
             content = await file.read()
@@ -104,11 +112,12 @@ class FileService:
         # Upload to storage (Supabase or local)
         if FileService._should_use_supabase():
             try:
-                # Upload to Supabase
-                storage_path = supabase_storage.upload_file(unique_filename, content)
+                # Upload to Supabase Storage
+                storage_path = supabase_storage.upload_file(unique_filename, content, content_type)
+                print(f"File uploaded to Supabase: {storage_path}")
             except Exception as e:
-                # Fallback to local storage if Supabase fails
                 print(f"Supabase upload failed, falling back to local storage: {e}")
+                # Fallback to local storage if Supabase fails
                 FileService._create_upload_directory()
                 local_path = os.path.join("uploads", unique_filename)
                 os.makedirs(os.path.dirname(local_path), exist_ok=True)
@@ -117,6 +126,7 @@ class FileService:
                     with open(local_path, "wb") as buffer:
                         buffer.write(content)
                     storage_path = local_path
+                    print(f"File saved locally: {storage_path}")
                 except Exception as local_e:
                     raise HTTPException(
                         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -199,9 +209,26 @@ class FileService:
             return False
         
         try:
-            # Delete the physical file
-            if file.storage_path and os.path.exists(file.storage_path):
-                os.remove(file.storage_path)
+            # Delete the physical file from storage
+            if file.storage_path:
+                if file.storage_path.startswith('http'):
+                    # It's a Supabase URL, extract the file path and delete from Supabase
+                    if supabase_storage.is_available():
+                        # Extract file path from URL (assuming URL format: .../{bucket_name}/{file_path})
+                        try:
+                            # Get the path part after the bucket name
+                            url_parts = file.storage_path.split('/')
+                            if 'requirement-files' in url_parts:
+                                bucket_index = url_parts.index('requirement-files')
+                                file_path = '/'.join(url_parts[bucket_index + 1:])
+                                supabase_storage.delete_file(file_path)
+                                print(f"Deleted file from Supabase: {file_path}")
+                        except Exception as e:
+                            print(f"Failed to delete from Supabase: {e}")
+                elif os.path.exists(file.storage_path):
+                    # It's a local file path
+                    os.remove(file.storage_path)
+                    print(f"Deleted local file: {file.storage_path}")
             
             # Delete associated AI jobs (they should cascade due to foreign key constraints)
             from app.db.models.ai_job import AIJob

@@ -15,9 +15,10 @@ class SupabaseStorage:
         self.client = None
         self.bucket_name = "requirement-files"  # You'll need to create this bucket in Supabase
         
-        if False and SUPABASE_AVAILABLE and settings.supabase_url and settings.supabase_key:  # Temporarily disabled
+        if SUPABASE_AVAILABLE and settings.supabase_url and settings.supabase_key:  # Enable Supabase
             try:
                 self.client = create_client(settings.supabase_url, settings.supabase_key)
+                print(f"Supabase client initialized successfully for bucket: {self.bucket_name}")
             except Exception as e:
                 print(f"Warning: Could not initialize Supabase client: {e}")
                 self.client = None
@@ -28,27 +29,35 @@ class SupabaseStorage:
         """Check if Supabase storage is available and configured."""
         return self.client is not None
     
-    def upload_file(self, file_path: str, file_content: bytes) -> str:
+    def upload_file(self, file_path: str, file_content: bytes, content_type: str = "application/octet-stream") -> str:
         """Upload file to Supabase storage and return the public URL."""
         if not self.is_available():
             raise Exception("Supabase storage is not available")
             
         try:
-            # Upload file to Supabase storage
+            # Upload file to Supabase storage - simplified approach
             response = self.client.storage.from_(self.bucket_name).upload(
                 path=file_path,
-                file=file_content,
-                file_options={"content-type": "application/octet-stream"}
+                file=file_content
             )
             
+            # Check for errors in response
             if hasattr(response, 'error') and response.error:
                 raise Exception(f"Supabase upload error: {response.error}")
             
             # Get public URL
-            public_url = self.client.storage.from_(self.bucket_name).get_public_url(file_path)
-            return public_url
+            public_url_response = self.client.storage.from_(self.bucket_name).get_public_url(file_path)
+            
+            # The public URL is directly returned as a string
+            if isinstance(public_url_response, str):
+                return public_url_response
+            elif hasattr(public_url_response, 'get'):
+                return public_url_response.get('publicUrl', public_url_response)
+            else:
+                return str(public_url_response)
             
         except Exception as e:
+            print(f"Supabase upload error: {str(e)}")
             raise Exception(f"Failed to upload to Supabase: {str(e)}")
     
     def delete_file(self, file_path: str) -> bool:

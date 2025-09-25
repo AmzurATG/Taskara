@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 from fastapi import HTTPException, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from app.db.models.user import User
+from app.db.models.user import User, UserRole
 from app.schemas.user import UserCreate, UserLogin, UserResponse, TokenData
 from app.core.security import verify_password, get_password_hash, create_access_token, verify_token
 from app.db.session import get_db
@@ -29,7 +29,8 @@ class AuthService:
             id=uuid.uuid4(),
             name=user_data.name,
             email=user_data.email,
-            password_hash=hashed_password
+            password_hash=hashed_password,
+            role=user_data.role  # Use role directly as string
         )
         
         db.add(db_user)
@@ -59,7 +60,12 @@ class AuthService:
     @staticmethod
     def create_user_token(user: User) -> str:
         """Create access token for user"""
-        token_data = {"sub": str(user.id)}
+        # Handle role as string (from database) - default to 'user' if None
+        user_role = user.role if user.role else "user"
+        token_data = {
+            "sub": str(user.id), 
+            "role": user_role  # Include role in token with fallback
+        }
         return create_access_token(token_data)
     
     @staticmethod

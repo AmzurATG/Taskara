@@ -131,7 +131,7 @@ def process_ai_job(self, job_id: str):
                 'epics': len([item for item in work_items if item.item_type.value == 'epic']),
                 'stories': len([item for item in work_items if item.item_type.value == 'story']),
                 'tasks': len([item for item in work_items if item.item_type.value == 'task']),
-                'subtasks': len([item for item in work_items if item.item_type.value == 'subtask'])
+                'subtasks': len([item for item in work_items if item.item_type.value == 'subtasks'])
             }
             
             logger.info(f"📊 Work items created for file '{file_record.file_name}':")
@@ -147,6 +147,29 @@ def process_ai_job(self, job_id: str):
             ai_job.error_message = f"Work item creation failed: {str(e)}"
             db.commit()
             return {"status": "failed", "error": str(e)}
+        
+        # Index document for RAG (chatbot functionality)
+        logger.info(f"Indexing document for RAG: {file_record.file_name}")
+        ai_job.progress = 90
+        db.commit()
+        
+        try:
+            from app.services.rag_service import rag_service
+            index_success = rag_service.index_document(
+                db=db,
+                file_id=ai_job.file_id,
+                user_id=file_record.uploaded_by
+            )
+            
+            if index_success:
+                logger.info(f"✅ Successfully indexed document for RAG: {file_record.file_name}")
+            else:
+                logger.warning(f"⚠️ Failed to index document for RAG: {file_record.file_name}")
+                
+        except Exception as e:
+            logger.error(f"RAG indexing failed for job {job_id}: {str(e)}")
+            # Don't fail the entire job if RAG indexing fails, just log the warning
+            logger.warning(f"⚠️ Document processing completed but RAG indexing failed: {str(e)}")
         
         # Update job with completion
         ai_job.status = JobStatus.DONE
@@ -325,6 +348,29 @@ def process_ai_job_minimal(self, job_id: str):
             ai_job.error_message = f"Work item creation failed: {str(e)}"
             db.commit()
             return {"status": "failed", "error": str(e)}
+        
+        # Index document for RAG (chatbot functionality)
+        logger.info(f"Indexing document for RAG: {file_record.file_name}")
+        ai_job.progress = 90
+        db.commit()
+        
+        try:
+            from app.services.rag_service import rag_service
+            index_success = rag_service.index_document(
+                db=db,
+                file_id=ai_job.file_id,
+                user_id=file_record.uploaded_by
+            )
+            
+            if index_success:
+                logger.info(f"✅ Successfully indexed document for RAG: {file_record.file_name}")
+            else:
+                logger.warning(f"⚠️ Failed to index document for RAG: {file_record.file_name}")
+                
+        except Exception as e:
+            logger.error(f"RAG indexing failed for job {job_id}: {str(e)}")
+            # Don't fail the entire job if RAG indexing fails, just log the warning
+            logger.warning(f"⚠️ Document processing completed but RAG indexing failed: {str(e)}")
         
         # Mark as completed
         ai_job.status = JobStatus.DONE

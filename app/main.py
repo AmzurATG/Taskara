@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.routes import auth, projects, health, files, ai_jobs, work_items, rag
+from app.api.routes import auth, projects, health, files, ai_jobs, work_items, rag, users
 from app.core.config import settings
 from app.db.session import test_connection
 import logging
@@ -44,4 +44,5 @@ app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
 app.include_router(files.router, prefix="/api", tags=["files"])  # Changed to /api for both project and standalone file ops
 app.include_router(ai_jobs.router, prefix="/api/projects", tags=["ai-jobs"])
 app.include_router(work_items.router, prefix="/api", tags=["work-items"])
-app.include_router(rag.router, prefix="/api", tags=["rag"])
+app.include_router(rag.router, prefix="/api/rag", tags=["rag"])
+app.include_router(users.router, prefix="/api/admin", tags=["users"])

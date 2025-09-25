@@ -4,6 +4,11 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from app.db.session import Base
+import enum
+
+class UserRole(str, enum.Enum):
+    USER = "user"
+    ADMIN = "admin"
 
 class User(Base):
     __tablename__ = "users"
@@ -13,8 +18,17 @@ class User(Base):
     email = Column(Text, unique=True, nullable=False, index=True)
     password_hash = Column(Text, nullable=True)  # nullable if Google login only
     google_id = Column(Text, nullable=True)  # for Google auth
+    role = Column(String(50), nullable=True, default="user")  # Match database varchar(50) type
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
     # Relationships
     projects = relationship("Project", back_populates="owner")
+
+    @property
+    def role_enum(self):
+        """Convert string role to enum for type safety"""
+        try:
+            return UserRole(self.role) if self.role else UserRole.USER
+        except ValueError:
+            return UserRole.USER
