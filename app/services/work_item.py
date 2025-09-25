@@ -214,7 +214,7 @@ class WorkItemService:
                 "id": str(item.id),
                 "title": item.title,
                 "description": item.description,
-                "item_type": item.item_type.value,
+                "type": item.item_type.value,
                 "priority": item.priority.value,
                 "status": item.status.value,
                 "acceptance_criteria": json.loads(item.acceptance_criteria) if item.acceptance_criteria else [],
