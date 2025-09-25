@@ -118,7 +118,13 @@ class WorkItemService:
                 title_to_item_map[work_item.title] = work_item
                 
                 # Track creation stats
-                creation_stats[work_item.item_type.value + 's'] += 1
+                plural_type = {
+                    'epic': 'epics',
+                    'story': 'stories', 
+                    'task': 'tasks',
+                    'subtask': 'subtasks'
+                }.get(work_item.item_type.value, work_item.item_type.value + 's')
+                creation_stats[plural_type] += 1
                 
                 # Add category information to work item if available
                 if '_category' in item_data:
