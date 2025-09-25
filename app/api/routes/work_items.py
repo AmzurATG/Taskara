@@ -78,12 +78,15 @@ async def get_work_item_stats(
 @router.patch("/work-items/{work_item_id}/status")
 async def update_work_item_status(
     work_item_id: UUID,
-    new_status: ItemStatus,
+    status_update: dict,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """Update work item status."""
     try:
+        # Extract status from request body
+        new_status = ItemStatus(status_update.get("status"))
+        
         updated_item = WorkItemService.update_work_item_status(
             db, work_item_id, new_status, current_user.id
         )
