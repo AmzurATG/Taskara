@@ -23,6 +23,12 @@ class AuthService:
                 detail="Email already registered"
             )
         
+        # Determine the role based on email and default logic
+        if user_data.email == "sireesha@malinator.com":
+            user_role = "admin"
+        else:
+            user_role = "user"  # Default role for all other users
+        
         # Create new user
         hashed_password = get_password_hash(user_data.password)
         db_user = User(
@@ -30,7 +36,7 @@ class AuthService:
             name=user_data.name,
             email=user_data.email,
             password_hash=hashed_password,
-            role=user_data.role  # Use role directly as string
+            role=user_role
         )
         
         db.add(db_user)

@@ -7,11 +7,13 @@ from app.db.models.user import UserRole
 class UserBase(BaseModel):
     name: str
     email: EmailStr
-    role: Union[UserRole, str] = "user"  # Accept both enum and string
+    role: Optional[Union[UserRole, str]] = None  # Make role optional
     
     @validator('role', pre=True)
     def convert_role(cls, v):
         """Convert string role to enum if needed"""
+        if v is None:
+            return None
         if isinstance(v, str):
             return v.lower()  # Ensure lowercase
         return v.value if hasattr(v, 'value') else v
