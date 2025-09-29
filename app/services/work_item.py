@@ -16,7 +16,7 @@ logging.basicConfig(level=logging.INFO)
 
 class WorkItemService:
     @staticmethod
-    def create_work_item_from_ai(db: Session, work_item_data: Dict[str, Any], project_id: UUID) -> WorkItem:
+    def create_work_item_from_ai(db: Session, work_item_data: Dict[str, Any], project_id: UUID, source_file_id: UUID = None) -> WorkItem:
         """Create a work item from parsed AI data."""
         
         # Normalize work item type (fix any plural forms)
@@ -53,7 +53,8 @@ class WorkItemService:
             acceptance_criteria=acceptance_criteria_json,
             estimated_hours=work_item_data.get("estimated_hours"),
             status=ItemStatus.AI_GENERATED,
-            order_index=order_index
+            order_index=order_index,
+            source_file_id=source_file_id  # Add source file reference
         )
         
         db.add(db_work_item)
@@ -65,7 +66,8 @@ class WorkItemService:
         db: Session, 
         parsed_results: List[Dict[str, Any]], 
         project_id: UUID,
-        file_name: str = None
+        file_name: str = None,
+        source_file_id: UUID = None
     ) -> List[WorkItem]:
         """Create work items with intelligent automatic hierarchy."""
         logger.info(f"🤖 Creating work items with intelligent hierarchy for project {project_id}" + (f" from file: {file_name}" if file_name else ""))
@@ -113,7 +115,7 @@ class WorkItemService:
         creation_stats = {'epics': 0, 'stories': 0, 'tasks': 0, 'subtasks': 0, 'failed': 0}
         for item_data in organized_items:
             try:
-                work_item = WorkItemService.create_work_item_from_ai(db, item_data, project_id)
+                work_item = WorkItemService.create_work_item_from_ai(db, item_data, project_id, source_file_id)
                 created_items.append(work_item)
                 title_to_item_map[work_item.title] = work_item
                 
@@ -198,12 +200,24 @@ class WorkItemService:
         item_type: Optional[ItemType] = None
     ) -> List[WorkItem]:
         """Get all work items for a project."""
-        query = db.query(WorkItem).filter(WorkItem.project_id == project_id)
+        from sqlalchemy.orm import joinedload
         
-        if item_type:
-            query = query.filter(WorkItem.item_type == item_type)
-        
-        return query.order_by(WorkItem.order_index, WorkItem.created_at).all()
+        try:
+            query = db.query(WorkItem).options(joinedload(WorkItem.source_file)).filter(WorkItem.project_id == project_id)
+            
+            if item_type:
+                query = query.filter(WorkItem.item_type == item_type)
+            
+            return query.order_by(WorkItem.order_index, WorkItem.created_at).all()
+        except Exception as e:
+            # If there's an error with joinedload, fall back to basic query
+            logger.warning(f"Error loading work items with source files: {e}")
+            query = db.query(WorkItem).filter(WorkItem.project_id == project_id)
+            
+            if item_type:
+                query = query.filter(WorkItem.item_type == item_type)
+            
+            return query.order_by(WorkItem.order_index, WorkItem.created_at).all()
     
     @staticmethod
     def get_work_item_hierarchy(db: Session, project_id: UUID, user_id: UUID) -> List[Dict[str, Any]]:
@@ -216,6 +230,15 @@ class WorkItemService:
         
         # First pass: create all item dictionaries
         for item in all_items:
+            # Safely get source file name
+            source_file_name = None
+            try:
+                if hasattr(item, 'source_file') and item.source_file and hasattr(item.source_file, 'file_name'):
+                    source_file_name = item.source_file.file_name
+            except Exception:
+                # If there's any issue accessing source file, default to None
+                source_file_name = None
+            
             item_dict = {
                 "id": str(item.id),
                 "title": item.title,
@@ -228,7 +251,8 @@ class WorkItemService:
                 "order_index": item.order_index,
                 "parent_id": str(item.parent_id) if item.parent_id else None,
                 "created_at": item.created_at.isoformat(),
-                "children": []
+                "children": [],
+                "source_file_name": source_file_name
             }
             
             items_by_id[str(item.id)] = item_dict

@@ -33,7 +33,17 @@ async def get_project_work_items(
         work_items = WorkItemService.get_project_work_items(
             db, project_id, current_user.id, item_type
         )
-        return [WorkItemResponse.from_orm(item) for item in work_items]
+        
+        # Convert to response model with source file information
+        response_items = []
+        for item in work_items:
+            response_item = WorkItemResponse.from_orm(item)
+            # Add source file name if available
+            if item.source_file:
+                response_item.source_file_name = item.source_file.file_name
+            response_items.append(response_item)
+            
+        return response_items
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

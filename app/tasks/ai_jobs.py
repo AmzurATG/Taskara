@@ -120,7 +120,7 @@ def process_ai_job(self, job_id: str):
         
         try:
             work_items = WorkItemService.create_work_items_with_hierarchy(
-                db, parsed_results, ai_job.project_id, file_record.file_name
+                db, parsed_results, ai_job.project_id, file_record.file_name, file_record.id
             )
             
             if not work_items:
@@ -334,9 +334,10 @@ def process_ai_job_minimal(self, job_id: str):
             work_item_service = WorkItemService()
             created_items = work_item_service.create_work_items_with_hierarchy(
                 db=db,
-                project_id=ai_job.project_id,
                 parsed_results=parsed_results,
-                file_name=file_record.file_name
+                project_id=ai_job.project_id,
+                file_name=file_record.file_name,
+                source_file_id=file_record.id
             )
             
             logger.info(f"✅ Minimal processing completed for {file_record.file_name}")

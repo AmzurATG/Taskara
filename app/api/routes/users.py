@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
@@ -6,7 +6,10 @@ from sqlalchemy import func
 
 from app.db.session import get_db
 from app.db.models.user import User, UserRole
+from app.db.models.project import Project
+from app.db.models.work_item import WorkItem
 from app.schemas.user import UserListItem, UserRoleUpdate, UserResponse
+from app.schemas.project import Project as ProjectSchema
 from app.api.deps import get_current_user
 
 router = APIRouter()
@@ -136,4 +139,101 @@ async def get_user(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve user: {str(e)}"
+        )
+
+@router.get("/all-projects", response_model=List[ProjectSchema])
+async def get_all_projects_admin(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin)
+):
+    """Get all projects in the system (Admin only)"""
+    try:
+        projects = db.query(Project).all()
+        return [ProjectSchema.from_orm(project) for project in projects]
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve all projects: {str(e)}"
+        )
+
+@router.get("/users-with-projects")
+async def get_users_with_projects(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin)
+):
+    """Get all users with their projects and work item statistics (Admin only)"""
+    try:
+        # Get all users
+        users = db.query(User).all()
+        
+        # Get all projects
+        projects = db.query(Project).all()
+        
+        # Get all work items
+        work_items = db.query(WorkItem).all()
+        
+        # Create a mapping of projects to their work items
+        project_work_items = {}
+        for work_item in work_items:
+            if work_item.project_id not in project_work_items:
+                project_work_items[work_item.project_id] = []
+            project_work_items[work_item.project_id].append(work_item)
+        
+        # Build the response
+        users_with_projects = []
+        
+        for user in users:
+            # Get user's projects
+            user_projects = [p for p in projects if p.owner_id == user.id]
+            
+            # Calculate statistics for each project
+            projects_with_stats = []
+            for project in user_projects:
+                # Get work items for this project
+                project_items = project_work_items.get(project.id, [])
+                
+                # Count different types of work items
+                epics = [item for item in project_items if item.item_type == 'epic']
+                user_stories = [item for item in project_items if item.item_type == 'story']
+                tasks = [item for item in project_items if item.item_type == 'task']
+                subtasks = [item for item in project_items if item.item_type == 'subtask']
+                
+                project_data = {
+                    "id": str(project.id),
+                    "name": project.name,
+                    "description": project.description,
+                    "status": "active",  # Default status, add to model if needed
+                    "created_at": project.created_at.isoformat() if project.created_at else None,
+                    "statistics": {
+                        "epics": len(epics),
+                        "userStories": len(user_stories),
+                        "tasks": len(tasks),
+                        "subtasks": len(subtasks),
+                        "totalWorkItems": len(project_items)
+                    }
+                }
+                projects_with_stats.append(project_data)
+            
+            # Calculate total work items for user
+            total_work_items = sum(p["statistics"]["totalWorkItems"] for p in projects_with_stats)
+            
+            user_data = {
+                "id": str(user.id),
+                "name": user.name,
+                "email": user.email,
+                "role": user.role,
+                "created_at": user.created_at.isoformat() if user.created_at else None,
+                "projects": projects_with_stats,
+                "projectCount": len(user_projects),
+                "totalWorkItems": total_work_items
+            }
+            users_with_projects.append(user_data)
+        
+        return users_with_projects
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve users with projects: {str(e)}"
         )

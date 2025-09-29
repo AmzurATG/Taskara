@@ -19,6 +19,7 @@ class WorkItemBase(BaseModel):
 class WorkItemCreate(WorkItemBase):
     project_id: UUID
     parent_id: Optional[UUID] = None
+    source_file_id: Optional[UUID] = None
 
 
 class WorkItemUpdate(BaseModel):
@@ -37,6 +38,8 @@ class WorkItemResponse(WorkItemBase):
     id: UUID
     project_id: UUID
     parent_id: Optional[UUID] = None
+    source_file_id: Optional[UUID] = None
+    source_file_name: Optional[str] = None  # Include file name for display
     status: ItemStatus
     created_at: datetime
     updated_at: Optional[datetime] = None
@@ -53,6 +56,7 @@ class WorkItemHierarchyResponse(BaseModel):
     type: str
     priority: str
     status: str
+    source_file_name: Optional[str] = None
     acceptance_criteria: List[str] = []
     estimated_hours: Optional[float] = None
     created_at: str
