@@ -30,6 +30,7 @@ class WorkItem(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
     project_id = Column(UUID(as_uuid=True), ForeignKey("projects.id"), nullable=False)
     parent_id = Column(UUID(as_uuid=True), ForeignKey("work_items.id"), nullable=True)  # self-referential
+    source_file_id = Column(UUID(as_uuid=True), ForeignKey("files.id"), nullable=True)  # Track which file generated this work item
     item_type = Column(Enum(ItemType), nullable=False)
     title = Column(Text, nullable=False)
     description = Column(Text, nullable=True)
@@ -45,3 +46,4 @@ class WorkItem(Base):
     project = relationship("Project", back_populates="work_items")
     parent = relationship("WorkItem", remote_side=[id], back_populates="children")
     children = relationship("WorkItem", back_populates="parent")
+    source_file = relationship("File")

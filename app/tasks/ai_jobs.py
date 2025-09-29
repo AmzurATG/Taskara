@@ -120,7 +120,7 @@ def process_ai_job(self, job_id: str):
         
         try:
             work_items = WorkItemService.create_work_items_with_hierarchy(
-                db, parsed_results, ai_job.project_id, file_record.file_name
+                db, parsed_results, ai_job.project_id, file_record.file_name, ai_job.file_id
             )
             
             if not work_items:

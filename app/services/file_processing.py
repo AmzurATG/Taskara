@@ -1,5 +1,6 @@
 import os
 import uuid
+import hashlib
 from typing import List, Optional
 from uuid import UUID
 from sqlalchemy.orm import Session
@@ -56,6 +57,31 @@ class FileService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="File size exceeds 10MB limit"
             )
+
+    @staticmethod
+    def _calculate_file_hash(content: bytes) -> str:
+        """Calculate SHA-256 hash of file content"""
+        return hashlib.sha256(content).hexdigest()
+
+    @staticmethod
+    def _check_duplicate_file(db: Session, project_id: UUID, file_hash: str, file_name: str) -> Optional[File]:
+        """Check if file with same hash or name already exists in project"""
+        # Check for exact hash match (same content)
+        existing_file = db.query(File).filter(
+            File.project_id == project_id,
+            File.file_hash == file_hash
+        ).first()
+        
+        if existing_file:
+            return existing_file
+            
+        # Check for same filename (different content but same name)
+        existing_file_by_name = db.query(File).filter(
+            File.project_id == project_id,
+            File.file_name == file_name
+        ).first()
+        
+        return existing_file_by_name
     
     @staticmethod
     def _verify_project_ownership(db: Session, project_id: UUID, user_id: UUID) -> Project:
@@ -103,11 +129,29 @@ class FileService:
         # Read file content
         try:
             content = await file.read()
+            file_size = len(content)
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to read file: {str(e)}"
             )
+        
+        # Calculate file hash for duplicate detection
+        file_hash = FileService._calculate_file_hash(content)
+        
+        # Check for duplicates
+        existing_file = FileService._check_duplicate_file(db, project_id, file_hash, file.filename)
+        if existing_file:
+            if existing_file.file_hash == file_hash:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"This file has already been uploaded to your project. The system detected identical content from '{existing_file.file_name}'. Please select a different document to continue."
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"A file named '{file.filename}' already exists in this project. Please rename your file or choose a different document to avoid conflicts."
+                )
         
         # Upload to storage (Supabase or local)
         if FileService._should_use_supabase():
@@ -153,7 +197,9 @@ class FileService:
             project_id=project_id,
             file_name=file.filename,
             storage_path=storage_path,
-            uploaded_by=user_id
+            uploaded_by=user_id,
+            file_hash=file_hash,
+            file_size=str(file_size)
         )
         
         db.add(db_file)
@@ -175,6 +221,8 @@ class FileService:
             file_name=db_file.file_name,
             storage_path=db_file.storage_path,
             uploaded_by=db_file.uploaded_by,
+            file_hash=db_file.file_hash,
+            file_size=int(file_size) if file_size else None,
             created_at=db_file.created_at,
             message=f"File uploaded successfully. AI job created with ID: {ai_job.id}"
         )
@@ -185,7 +233,7 @@ class FileService:
         # Verify project ownership
         FileService._verify_project_ownership(db, project_id, user_id)
         
-        return db.query(File).filter(File.project_id == project_id).all()
+        return db.query(File).filter(File.project_id == project_id).order_by(File.created_at.desc()).all()
     
     @staticmethod
     def get_file(db: Session, file_id: UUID, user_id: UUID) -> Optional[File]:

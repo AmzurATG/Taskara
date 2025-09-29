@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field
 class FileBase(BaseModel):
     file_name: str = Field(..., min_length=1, max_length=255)
     storage_path: str = Field(..., min_length=1)
+    file_hash: Optional[str] = None
+    file_size: Optional[int] = None
 
 
 class FileCreate(BaseModel):
@@ -20,6 +22,8 @@ class FileUploadResponse(BaseModel):
     file_name: str
     storage_path: str
     uploaded_by: UUID
+    file_hash: Optional[str] = None
+    file_size: Optional[int] = None
     created_at: datetime
     message: str = "File uploaded successfully"
 

@@ -16,7 +16,7 @@ logging.basicConfig(level=logging.INFO)
 
 class WorkItemService:
     @staticmethod
-    def create_work_item_from_ai(db: Session, work_item_data: Dict[str, Any], project_id: UUID) -> WorkItem:
+    def create_work_item_from_ai(db: Session, work_item_data: Dict[str, Any], project_id: UUID, source_file_id: UUID = None) -> WorkItem:
         """Create a work item from parsed AI data."""
         
         # Normalize work item type (fix any plural forms)
@@ -53,7 +53,8 @@ class WorkItemService:
             acceptance_criteria=acceptance_criteria_json,
             estimated_hours=work_item_data.get("estimated_hours"),
             status=ItemStatus.AI_GENERATED,
-            order_index=order_index
+            order_index=order_index,
+            source_file_id=source_file_id
         )
         
         db.add(db_work_item)
@@ -65,7 +66,8 @@ class WorkItemService:
         db: Session, 
         parsed_results: List[Dict[str, Any]], 
         project_id: UUID,
-        file_name: str = None
+        file_name: str = None,
+        source_file_id: UUID = None
     ) -> List[WorkItem]:
         """Create work items with intelligent automatic hierarchy."""
         logger.info(f"🤖 Creating work items with intelligent hierarchy for project {project_id}" + (f" from file: {file_name}" if file_name else ""))
@@ -113,7 +115,7 @@ class WorkItemService:
         creation_stats = {'epics': 0, 'stories': 0, 'tasks': 0, 'subtasks': 0, 'failed': 0}
         for item_data in organized_items:
             try:
-                work_item = WorkItemService.create_work_item_from_ai(db, item_data, project_id)
+                work_item = WorkItemService.create_work_item_from_ai(db, item_data, project_id, source_file_id)
                 created_items.append(work_item)
                 title_to_item_map[work_item.title] = work_item
                 
@@ -197,13 +199,30 @@ class WorkItemService:
         user_id: UUID,
         item_type: Optional[ItemType] = None
     ) -> List[WorkItem]:
-        """Get all work items for a project."""
+        """Get all work items for a project with source file information."""
+        from app.db.models.file import File
+        
+        # Get work items first
         query = db.query(WorkItem).filter(WorkItem.project_id == project_id)
         
         if item_type:
             query = query.filter(WorkItem.item_type == item_type)
         
-        return query.order_by(WorkItem.order_index, WorkItem.created_at).all()
+        work_items = query.order_by(WorkItem.order_index, WorkItem.created_at).all()
+        
+        # For each work item, get the associated file name if it exists
+        for work_item in work_items:
+            if work_item.source_file_id:
+                # Query the file directly using the source_file_id
+                file_record = db.query(File).filter(File.id == work_item.source_file_id).first()
+                if file_record:
+                    work_item.source_file_name = file_record.file_name
+                else:
+                    work_item.source_file_name = None
+            else:
+                work_item.source_file_name = None
+        
+        return work_items
     
     @staticmethod
     def get_work_item_hierarchy(db: Session, project_id: UUID, user_id: UUID) -> List[Dict[str, Any]]:
@@ -228,6 +247,7 @@ class WorkItemService:
                 "order_index": item.order_index,
                 "parent_id": str(item.parent_id) if item.parent_id else None,
                 "created_at": item.created_at.isoformat(),
+                "source_file_name": getattr(item, 'source_file_name', None),  # Include source file name
                 "children": []
             }
             
@@ -647,3 +667,8 @@ class WorkItemService:
         db.delete(work_item)
         db.commit()
         return True
+
+    @staticmethod
+    def get_work_items_by_file(db: Session, file_id: UUID) -> List[WorkItem]:
+        """Get all work items generated from a specific file."""
+        return db.query(WorkItem).filter(WorkItem.source_file_id == file_id).order_by(WorkItem.order_index).all()

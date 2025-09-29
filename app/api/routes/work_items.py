@@ -33,7 +33,28 @@ async def get_project_work_items(
         work_items = WorkItemService.get_project_work_items(
             db, project_id, current_user.id, item_type
         )
-        return [WorkItemResponse.from_orm(item) for item in work_items]
+        # Convert to response format with source_file_name
+        response_items = []
+        for item in work_items:
+            item_dict = {
+                'id': item.id,
+                'project_id': item.project_id,
+                'parent_id': item.parent_id,
+                'item_type': item.item_type,
+                'title': item.title,
+                'description': item.description,
+                'status': item.status,
+                'priority': item.priority,
+                'acceptance_criteria': item.acceptance_criteria,
+                'estimated_hours': item.estimated_hours,
+                'order_index': item.order_index,
+                'source_file_id': item.source_file_id,
+                'created_at': item.created_at,
+                'updated_at': item.updated_at,
+                'source_file_name': getattr(item, 'source_file_name', None)
+            }
+            response_items.append(WorkItemResponse(**item_dict))
+        return response_items
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

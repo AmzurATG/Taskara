@@ -13,6 +13,8 @@ class File(Base):
     file_name = Column(Text, nullable=False)
     storage_path = Column(Text, nullable=False)  # path/S3 URL/cloudinary / supabase
     uploaded_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    file_hash = Column(String(64), nullable=True)  # SHA-256 hash for duplicate detection
+    file_size = Column(String, nullable=True)  # File size in bytes
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
     # Relationships
