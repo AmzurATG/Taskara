@@ -33,27 +33,17 @@ async def get_project_work_items(
         work_items = WorkItemService.get_project_work_items(
             db, project_id, current_user.id, item_type
         )
-        # Convert to response format with source_file_name
+        
+        # Convert to response model with source file information
         response_items = []
         for item in work_items:
-            item_dict = {
-                'id': item.id,
-                'project_id': item.project_id,
-                'parent_id': item.parent_id,
-                'item_type': item.item_type,
-                'title': item.title,
-                'description': item.description,
-                'status': item.status,
-                'priority': item.priority,
-                'acceptance_criteria': item.acceptance_criteria,
-                'estimated_hours': item.estimated_hours,
-                'order_index': item.order_index,
-                'source_file_id': item.source_file_id,
-                'created_at': item.created_at,
-                'updated_at': item.updated_at,
-                'source_file_name': getattr(item, 'source_file_name', None)
-            }
-            response_items.append(WorkItemResponse(**item_dict))
+            response_item = WorkItemResponse.from_orm(item)
+            # Add source file name if available
+            if hasattr(item, 'source_file') and item.source_file:
+                response_item.source_file_name = item.source_file.file_name
+            elif hasattr(item, 'source_file_name'):
+                response_item.source_file_name = item.source_file_name
+            response_items.append(response_item)
         return response_items
     except Exception as e:
         raise HTTPException(

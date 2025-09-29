@@ -200,29 +200,40 @@ class WorkItemService:
         item_type: Optional[ItemType] = None
     ) -> List[WorkItem]:
         """Get all work items for a project with source file information."""
-        from app.db.models.file import File
+        from sqlalchemy.orm import joinedload
         
-        # Get work items first
-        query = db.query(WorkItem).filter(WorkItem.project_id == project_id)
-        
-        if item_type:
-            query = query.filter(WorkItem.item_type == item_type)
-        
-        work_items = query.order_by(WorkItem.order_index, WorkItem.created_at).all()
-        
-        # For each work item, get the associated file name if it exists
-        for work_item in work_items:
-            if work_item.source_file_id:
-                # Query the file directly using the source_file_id
-                file_record = db.query(File).filter(File.id == work_item.source_file_id).first()
-                if file_record:
-                    work_item.source_file_name = file_record.file_name
+        try:
+            query = db.query(WorkItem).options(joinedload(WorkItem.source_file)).filter(WorkItem.project_id == project_id)
+            
+            if item_type:
+                query = query.filter(WorkItem.item_type == item_type)
+            
+            return query.order_by(WorkItem.order_index, WorkItem.created_at).all()
+        except Exception as e:
+            # If there's an error with joinedload, fall back to basic query with manual loading
+            logger.warning(f"Error loading work items with source files: {e}")
+            from app.db.models.file import File
+            
+            query = db.query(WorkItem).filter(WorkItem.project_id == project_id)
+            
+            if item_type:
+                query = query.filter(WorkItem.item_type == item_type)
+            
+            work_items = query.order_by(WorkItem.order_index, WorkItem.created_at).all()
+            
+            # For each work item, get the associated file name if it exists
+            for work_item in work_items:
+                if work_item.source_file_id:
+                    # Query the file directly using the source_file_id
+                    file_record = db.query(File).filter(File.id == work_item.source_file_id).first()
+                    if file_record:
+                        work_item.source_file_name = file_record.file_name
+                    else:
+                        work_item.source_file_name = None
                 else:
                     work_item.source_file_name = None
-            else:
-                work_item.source_file_name = None
-        
-        return work_items
+            
+            return work_items
     
     @staticmethod
     def get_work_item_hierarchy(db: Session, project_id: UUID, user_id: UUID) -> List[Dict[str, Any]]:
@@ -235,6 +246,15 @@ class WorkItemService:
         
         # First pass: create all item dictionaries
         for item in all_items:
+            # Safely get source file name
+            source_file_name = None
+            try:
+                if hasattr(item, 'source_file') and item.source_file and hasattr(item.source_file, 'file_name'):
+                    source_file_name = item.source_file.file_name
+            except Exception:
+                # If there's any issue accessing source file, default to None
+                source_file_name = None
+            
             item_dict = {
                 "id": str(item.id),
                 "title": item.title,
@@ -247,8 +267,8 @@ class WorkItemService:
                 "order_index": item.order_index,
                 "parent_id": str(item.parent_id) if item.parent_id else None,
                 "created_at": item.created_at.isoformat(),
-                "source_file_name": getattr(item, 'source_file_name', None),  # Include source file name
-                "children": []
+                "children": [],
+                "source_file_name": source_file_name
             }
             
             items_by_id[str(item.id)] = item_dict
