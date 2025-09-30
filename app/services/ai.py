@@ -54,14 +54,6 @@ class AIParser:
             "gemini-2.0-flash-thinking-exp-1219"
         ]
         
-        # OpenRouter model configurations (Better models for structured output)
-        self.openrouter_models = [
-            "anthropic/claude-3-haiku:beta",
-            "meta-llama/llama-3.2-3b-instruct:free",
-            "google/gemma-2-9b-it:free",
-            "mistralai/mistral-7b-instruct:free"
-        ]
-        
         # Initialize Gemini
         if settings.gemini_api_key:
             genai.configure(api_key=settings.gemini_api_key)
@@ -69,11 +61,7 @@ class AIParser:
         else:
             self.gemini_available = False
         
-        # Initialize OpenRouter
-        self.openrouter_available = bool(settings.openrouter_api_key)
-        
-        # Initialize OpenAI as final fallback
-        self.openai_client = OpenAI(api_key=getattr(settings, 'openai_api_key', '')) if hasattr(settings, 'openai_api_key') else None
+    # OpenAI fallback removed
     
     def _create_epic_consolidation_prompt(self) -> str:
         """Create system prompt for first pass: extracting and consolidating epics."""
@@ -622,78 +610,9 @@ Parse this text into structured work items. Return ONLY valid JSON matching the 
         # All Gemini models failed
         raise Exception(f"All Gemini models failed")
 
-    def _call_openrouter(self, user_prompt: str) -> str:
-        """Call OpenRouter API with model fallback."""
-        if not self.openrouter_available:
-            raise Exception("OpenRouter API not configured")
-        
-        headers = {
-            "Authorization": f"Bearer {settings.openrouter_api_key}",
-            "Content-Type": "application/json"
-        }
-        
-        for model_name in self.openrouter_models:
-            try:
-                payload = {
-                    "model": model_name,
-                    "messages": [
-                        {"role": "system", "content": self._create_system_prompt()},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    "temperature": 0.1,
-                    "max_tokens": 4000,
-                    "top_p": 0.8
-                }
-                
-                response = requests.post(
-                    "https://openrouter.ai/api/v1/chat/completions",
-                    headers=headers,
-                    json=payload,
-                    timeout=60
-                )
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    response_text = result["choices"][0]["message"]["content"]
-                    print(f"OpenRouter {model_name} raw response: {response_text[:300]}...")
-                    return response_text
-                else:
-                    error_msg = f"OpenRouter {model_name} HTTP {response.status_code}: {response.text}"
-                    print(error_msg)
-                    
-                    # If quota/rate limit, try next model
-                    if response.status_code in [429, 403] or self._is_quota_exceeded(response.text):
-                        continue
-                    else:
-                        continue
-                        
-            except Exception as e:
-                print(f"OpenRouter {model_name} failed: {str(e)}")
-                continue
-        
-        raise Exception("All OpenRouter models failed")
 
-    def _call_openai(self, user_prompt: str) -> str:
-        """Call OpenAI API as fallback."""
-        if not self.openai_client:
-            raise Exception("OpenAI API not configured")
-        
-        try:
-            response = self.openai_client.chat.completions.create(
-                model="gpt-4",
-                messages=[
-                    {"role": "system", "content": self._create_system_prompt()},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.1,  # Low temperature for consistent output
-                max_tokens=4000,
-                top_p=0.8
-            )
-            
-            return response.choices[0].message.content
-        
-        except Exception as e:
-            raise Exception(f"OpenAI API error: {str(e)}")
+
+    # OpenAI fallback method removed
 
     def parse_requirements_chunk(self, text_chunk: str, chunk_index: int = 0) -> Dict[str, Any]:
         """Parse a chunk of requirements text into structured work items with intelligent fallback."""
@@ -703,55 +622,41 @@ Parse this text into structured work items. Return ONLY valid JSON matching the 
         user_prompt = self._create_user_prompt(text_chunk)
         errors = []
         
-        # Try Gemini models first
+        # Try Gemini models only
         if self.gemini_available:
             try:
                 response = self._call_gemini(user_prompt)
                 return self._validate_and_clean_response(response)
             except Exception as gemini_error:
-                error_msg = f"All Gemini models failed for chunk {chunk_index}: {gemini_error}"
-                print(error_msg)
-                errors.append(error_msg)
-        
-        # Try OpenRouter models
-        if self.openrouter_available:
-            try:
-                response = self._call_openrouter(user_prompt)
-                return self._validate_and_clean_response(response)
-            except Exception as openrouter_error:
-                error_msg = f"All OpenRouter models failed for chunk {chunk_index}: {openrouter_error}"
-                print(error_msg)
-                errors.append(error_msg)
-        
-        # Final fallback to OpenAI
-        if self.openai_client:
-            try:
-                response = self._call_openai(user_prompt)
-                return self._validate_and_clean_response(response)
-            except Exception as openai_error:
-                error_msg = f"OpenAI fallback failed for chunk {chunk_index}: {openai_error}"
-                print(error_msg)
-                errors.append(error_msg)
-        
-        # If all AI services fail, return empty result instead of creating fallback items
-        print(f"All AI services failed for chunk {chunk_index}, returning empty result")
+                error_msg = str(gemini_error)
+                print(f"Gemini failed for chunk {chunk_index}: {error_msg}")
+                # Quota exceeded or other error
+                if self._is_quota_exceeded(error_msg):
+                    return {
+                        'work_items': [],
+                        'summary': 'Quota exceeded, no work items created. Please try again later.'
+                    }
+                else:
+                    return {
+                        'work_items': [],
+                        'summary': f"No work items could be extracted from chunk {chunk_index + 1} - Gemini failed"
+                    }
+        # If Gemini is not available
         return {
             'work_items': [],
-            'summary': f"No work items could be extracted from chunk {chunk_index + 1} - all AI services failed"
+            'summary': 'No AI service available. Please check your configuration.'
         }
 
     def _call_ai_for_epic_consolidation(self, user_prompt: str) -> str:
         """Call AI services for epic consolidation with fallback."""
         errors = []
         
-        # Try Gemini models first
+        # Try Gemini models only
         if self.gemini_available:
             try:
                 if not self.gemini_available:
                     raise Exception("Gemini API not configured")
-                
                 full_prompt = f"{self._create_epic_consolidation_prompt()}\n\n{user_prompt}"
-                
                 for model_name in self.gemini_models:
                     try:
                         model = genai.GenerativeModel(model_name)
@@ -767,82 +672,25 @@ Parse this text into structured work items. Return ONLY valid JSON matching the 
                         return response.text
                     except Exception as e:
                         if self._is_quota_exceeded(str(e)):
-                            continue
+                            return 'QUOTA_EXCEEDED'
                         else:
                             continue
                 raise Exception("All Gemini models failed")
             except Exception as gemini_error:
-                errors.append(f"Gemini failed: {gemini_error}")
-        
-        # Try OpenRouter models
-        if self.openrouter_available:
-            try:
-                headers = {
-                    "Authorization": f"Bearer {settings.openrouter_api_key}",
-                    "Content-Type": "application/json"
-                }
-                
-                for model_name in self.openrouter_models:
-                    try:
-                        payload = {
-                            "model": model_name,
-                            "messages": [
-                                {"role": "system", "content": self._create_epic_consolidation_prompt()},
-                                {"role": "user", "content": user_prompt}
-                            ],
-                            "temperature": 0.1,
-                            "max_tokens": 4000,
-                            "top_p": 0.8
-                        }
-                        
-                        response = requests.post(
-                            "https://openrouter.ai/api/v1/chat/completions",
-                            headers=headers,
-                            json=payload,
-                            timeout=60
-                        )
-                        
-                        if response.status_code == 200:
-                            result = response.json()
-                            return result["choices"][0]["message"]["content"]
-                        elif response.status_code in [429, 403]:
-                            continue
-                        else:
-                            continue
-                    except Exception:
-                        continue
-                raise Exception("All OpenRouter models failed")
-            except Exception as openrouter_error:
-                errors.append(f"OpenRouter failed: {openrouter_error}")
-        
-        # Final fallback to OpenAI
-        if self.openai_client:
-            try:
-                response = self.openai_client.chat.completions.create(
-                    model="gpt-4",
-                    messages=[
-                        {"role": "system", "content": self._create_epic_consolidation_prompt()},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    temperature=0.1,
-                    max_tokens=4000,
-                    top_p=0.8
-                )
-                return response.choices[0].message.content
-            except Exception as openai_error:
-                errors.append(f"OpenAI failed: {openai_error}")
-        
-        raise Exception(f"All AI services failed for epic consolidation: {'; '.join(errors)}")
+                if self._is_quota_exceeded(str(gemini_error)):
+                    return 'QUOTA_EXCEEDED'
+                else:
+                    raise gemini_error
+        raise Exception("No AI service available. Please check your configuration.")
 
     def _call_ai_for_epic_breakdown(self, user_prompt: str) -> str:
         """Call AI services for epic breakdown with fallback."""
         errors = []
         
-        # Try Gemini models first
+        # Try Gemini models only
         if self.gemini_available:
             try:
                 full_prompt = f"{self._create_epic_breakdown_prompt()}\n\n{user_prompt}"
-                
                 for model_name in self.gemini_models:
                     try:
                         model = genai.GenerativeModel(model_name)
@@ -858,72 +706,16 @@ Parse this text into structured work items. Return ONLY valid JSON matching the 
                         return response.text
                     except Exception as e:
                         if self._is_quota_exceeded(str(e)):
-                            continue
+                            return 'QUOTA_EXCEEDED'
                         else:
                             continue
                 raise Exception("All Gemini models failed")
             except Exception as gemini_error:
-                errors.append(f"Gemini failed: {gemini_error}")
-        
-        # Try OpenRouter models
-        if self.openrouter_available:
-            try:
-                headers = {
-                    "Authorization": f"Bearer {settings.openrouter_api_key}",
-                    "Content-Type": "application/json"
-                }
-                
-                for model_name in self.openrouter_models:
-                    try:
-                        payload = {
-                            "model": model_name,
-                            "messages": [
-                                {"role": "system", "content": self._create_epic_breakdown_prompt()},
-                                {"role": "user", "content": user_prompt}
-                            ],
-                            "temperature": 0.1,
-                            "max_tokens": 4000,
-                            "top_p": 0.8
-                        }
-                        
-                        response = requests.post(
-                            "https://openrouter.ai/api/v1/chat/completions",
-                            headers=headers,
-                            json=payload,
-                            timeout=60
-                        )
-                        
-                        if response.status_code == 200:
-                            result = response.json()
-                            return result["choices"][0]["message"]["content"]
-                        elif response.status_code in [429, 403]:
-                            continue
-                        else:
-                            continue
-                    except Exception:
-                        continue
-                raise Exception("All OpenRouter models failed")
-            except Exception as openrouter_error:
-                errors.append(f"OpenRouter failed: {openrouter_error}")
-        
-        # Final fallback to OpenAI
-        if self.openai_client:
-            try:
-                response = self.openai_client.chat.completions.create(
-                    model="gpt-4",
-                    messages=[
-                        {"role": "system", "content": self._create_epic_breakdown_prompt()},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    temperature=0.1,
-                    max_tokens=4000,
-                    top_p=0.8
-                )
-                return response.choices[0].message.content
-            except Exception as openai_error:
-                errors.append(f"OpenAI failed: {openai_error}")
-        
-        raise Exception(f"All AI services failed for epic breakdown: {'; '.join(errors)}")
+                if self._is_quota_exceeded(str(gemini_error)):
+                    return 'QUOTA_EXCEEDED'
+                else:
+                    raise gemini_error
+        raise Exception("No AI service available. Please check your configuration.")
 
     def consolidate_epics_from_text(self, text: str, max_epics: int = 5) -> Dict[str, Any]:
         """First pass: Extract and consolidate epics from requirements text."""
@@ -934,6 +726,11 @@ Parse this text into structured work items. Return ONLY valid JSON matching the 
         
         try:
             response = self._call_ai_for_epic_consolidation(user_prompt)
+            if response == 'QUOTA_EXCEEDED':
+                return {
+                    'consolidated_epics': [],
+                    'summary': 'Quota exceeded, no work items created. Please try again later.'
+                }
             return self._validate_epic_consolidation_response(response)
         except Exception as e:
             print(f"Epic consolidation failed: {str(e)}")
@@ -952,6 +749,12 @@ Parse this text into structured work items. Return ONLY valid JSON matching the 
         
         try:
             response = self._call_ai_for_epic_breakdown(user_prompt)
+            if response == 'QUOTA_EXCEEDED':
+                return {
+                    'work_items': [],
+                    'epic_title': epic_data.get('title', 'Unknown Epic'),
+                    'summary': 'Quota exceeded, no work items created. Please try again later.'
+                }
             return self._validate_epic_breakdown_response(response)
         except Exception as e:
             print(f"Epic breakdown failed for epic '{epic_data.get('title', 'Unknown')}': {str(e)}")
