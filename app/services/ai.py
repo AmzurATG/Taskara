@@ -31,13 +31,13 @@ class ConsolidatedEpic(BaseModel):
 
 class EpicConsolidationResult(BaseModel):
     consolidated_epics: List[ConsolidatedEpic] = Field(default_factory=list, description="List of consolidated epics")
-    summary: str = Field(..., min_length=10, max_length=500, description="Consolidation overview")
+    summary: str = Field(..., min_length=10, max_length=1000, description="Consolidation overview")
 
 
 class EpicBreakdownResult(BaseModel):
     work_items: List[WorkItemCreate] = Field(default_factory=list, description="Detailed work items from epic breakdown")
     epic_title: str = Field(..., description="Title of epic being broken down")
-    summary: str = Field(..., min_length=10, max_length=500, description="Breakdown overview")
+    summary: str = Field(..., min_length=10, max_length=1000, description="Breakdown overview")
 
 
 class ParsedRequirements(BaseModel):
@@ -61,7 +61,15 @@ class AIParser:
         else:
             self.gemini_available = False
         
-    # OpenAI fallback removed
+        # Initialize OpenRouter as fallback
+        self.openrouter_available = bool(settings.openrouter_api_key)
+        
+        # Better OpenRouter models for structured output
+        self.openrouter_models = [
+            "anthropic/claude-3-haiku:beta",  # Best for structured output
+            "meta-llama/llama-3.1-8b-instruct:free",  # Good instruction following
+            "google/gemma-2-9b-it:free"  # Similar to Gemini
+        ]
     
     def _create_epic_consolidation_prompt(self) -> str:
         """Create system prompt for first pass: extracting and consolidating epics."""
@@ -463,6 +471,11 @@ Parse this text into structured work items. Return ONLY valid JSON matching the 
             if 'summary' not in parsed_data:
                 parsed_data['summary'] = 'Epic consolidation completed'
             
+            # Truncate summary if too long to prevent validation errors
+            if len(parsed_data['summary']) > 1000:
+                parsed_data['summary'] = parsed_data['summary'][:997] + "..."
+                print(f"📝 Summary truncated to fit 1000 character limit")
+            
             # Validate with Pydantic
             validated_data = EpicConsolidationResult(**parsed_data)
             return validated_data.dict()
@@ -495,6 +508,11 @@ Parse this text into structured work items. Return ONLY valid JSON matching the 
                 parsed_data['epic_title'] = 'Unknown Epic'
             if 'summary' not in parsed_data:
                 parsed_data['summary'] = 'Epic breakdown completed'
+            
+            # Truncate summary if too long to prevent validation errors
+            if len(parsed_data['summary']) > 1000:
+                parsed_data['summary'] = parsed_data['summary'][:997] + "..."
+                print(f"📝 Epic breakdown summary truncated to fit 1000 character limit")
             
             # Validate with Pydantic
             validated_data = EpicBreakdownResult(**parsed_data)
@@ -612,7 +630,59 @@ Parse this text into structured work items. Return ONLY valid JSON matching the 
 
 
 
-    # OpenAI fallback method removed
+    def _call_openrouter(self, user_prompt: str, system_prompt: str) -> str:
+        """Call OpenRouter API with better models for structured output."""
+        if not self.openrouter_available:
+            raise Exception("OpenRouter API not configured")
+        
+        headers = {
+            "Authorization": f"Bearer {settings.openrouter_api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        for model_name in self.openrouter_models:
+            print(f"🔍 Trying OpenRouter model: {model_name}")
+            try:
+                payload = {
+                    "model": model_name,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    "temperature": 0.1,
+                    "max_tokens": 4000,
+                    "top_p": 0.8
+                }
+                
+                response = requests.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=60
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    response_text = result["choices"][0]["message"]["content"]
+                    print(f"✅ OpenRouter {model_name} success: {response_text[:200]}...")
+                    return response_text
+                else:
+                    error_msg = f"OpenRouter {model_name} HTTP {response.status_code}: {response.text}"
+                    print(f"❌ {error_msg}")
+                    
+                    # If quota/rate limit, try next model
+                    if response.status_code in [429, 403] or self._is_quota_exceeded(response.text):
+                        print(f"🚫 Quota/rate limit for {model_name}, trying next")
+                        continue
+                    else:
+                        print(f"🔄 Other error for {model_name}, trying next")
+                        continue
+                        
+            except Exception as e:
+                print(f"❌ OpenRouter {model_name} failed: {str(e)}")
+                continue
+        
+        raise Exception("All OpenRouter models failed")
 
     def parse_requirements_chunk(self, text_chunk: str, chunk_index: int = 0) -> Dict[str, Any]:
         """Parse a chunk of requirements text into structured work items with intelligent fallback."""
@@ -653,11 +723,13 @@ Parse this text into structured work items. Return ONLY valid JSON matching the 
         
         # Try Gemini models only
         if self.gemini_available:
+            print(f"🔍 Trying Gemini for epic consolidation...")
             try:
                 if not self.gemini_available:
                     raise Exception("Gemini API not configured")
                 full_prompt = f"{self._create_epic_consolidation_prompt()}\n\n{user_prompt}"
                 for model_name in self.gemini_models:
+                    print(f"🔍 Trying Gemini model: {model_name}")
                     try:
                         model = genai.GenerativeModel(model_name)
                         response = model.generate_content(
@@ -669,18 +741,47 @@ Parse this text into structured work items. Return ONLY valid JSON matching the 
                                 max_output_tokens=4000,
                             )
                         )
+                        print(f"✅ Gemini {model_name} success: {response.text[:200]}...")
                         return response.text
                     except Exception as e:
-                        if self._is_quota_exceeded(str(e)):
+                        error_msg = str(e)
+                        print(f"❌ Gemini {model_name} failed: {error_msg}")
+                        if self._is_quota_exceeded(error_msg):
+                            print(f"🚫 Quota exceeded detected for {model_name}")
                             return 'QUOTA_EXCEEDED'
                         else:
+                            print(f"🔄 Non-quota error for {model_name}, trying next model")
                             continue
+                print("❌ All Gemini models failed")
                 raise Exception("All Gemini models failed")
             except Exception as gemini_error:
-                if self._is_quota_exceeded(str(gemini_error)):
+                error_msg = str(gemini_error)
+                print(f"❌ Epic consolidation Gemini error: {error_msg}")
+                if self._is_quota_exceeded(error_msg):
+                    print("🚫 Quota exceeded in epic consolidation")
                     return 'QUOTA_EXCEEDED'
                 else:
                     raise gemini_error
+        print("❌ Gemini not available for epic consolidation")
+        
+        # Fallback to OpenRouter
+        if self.openrouter_available:
+            print("🔄 Falling back to OpenRouter for epic consolidation...")
+            try:
+                response = self._call_openrouter(user_prompt, self._create_epic_consolidation_prompt())
+                if response == 'QUOTA_EXCEEDED':
+                    print("🚫 OpenRouter quota exceeded")
+                    return 'QUOTA_EXCEEDED'
+                print("✅ OpenRouter epic consolidation success")
+                return response
+            except Exception as openrouter_error:
+                error_msg = str(openrouter_error)
+                print(f"❌ OpenRouter epic consolidation failed: {error_msg}")
+                if self._is_quota_exceeded(error_msg):
+                    return 'QUOTA_EXCEEDED'
+                else:
+                    print("🔄 OpenRouter failed, no more fallbacks")
+        
         raise Exception("No AI service available. Please check your configuration.")
 
     def _call_ai_for_epic_breakdown(self, user_prompt: str) -> str:
@@ -715,6 +816,25 @@ Parse this text into structured work items. Return ONLY valid JSON matching the 
                     return 'QUOTA_EXCEEDED'
                 else:
                     raise gemini_error
+        
+        # Fallback to OpenRouter
+        if self.openrouter_available:
+            print("🔄 Falling back to OpenRouter for epic breakdown...")
+            try:
+                response = self._call_openrouter(user_prompt, self._create_epic_breakdown_prompt())
+                if response == 'QUOTA_EXCEEDED':
+                    print("🚫 OpenRouter quota exceeded")
+                    return 'QUOTA_EXCEEDED'
+                print("✅ OpenRouter epic breakdown success")
+                return response
+            except Exception as openrouter_error:
+                error_msg = str(openrouter_error)
+                print(f"❌ OpenRouter epic breakdown failed: {error_msg}")
+                if self._is_quota_exceeded(error_msg):
+                    return 'QUOTA_EXCEEDED'
+                else:
+                    print("🔄 OpenRouter failed, no more fallbacks")
+        
         raise Exception("No AI service available. Please check your configuration.")
 
     def consolidate_epics_from_text(self, text: str, max_epics: int = 5) -> Dict[str, Any]:
@@ -777,9 +897,18 @@ Parse this text into structured work items. Return ONLY valid JSON matching the 
         epic_consolidation_result = self.consolidate_epics_from_text(text)
         consolidated_epics = epic_consolidation_result.get('consolidated_epics', [])
         
+        # Debug logging for epic consolidation result
+        print(f"🔍 Epic consolidation result: {len(consolidated_epics)} epics found")
+        print(f"🔍 Summary: {epic_consolidation_result.get('summary', 'No summary')}")
+        
         if not consolidated_epics:
-            print("⚠️ No epics consolidated, falling back to single-pass approach")
-            return self.parse_requirements_document(text)
+            print("⚠️ No epics consolidated, returning error result")
+            error_summary = epic_consolidation_result.get('summary', 'Epic consolidation failed')
+            print(f"🔍 Error details: {error_summary}")
+            return [{
+                'work_items': [],
+                'summary': error_summary
+            }]
         
         print(f"✅ Consolidated {len(consolidated_epics)} epics: {[epic['title'] for epic in consolidated_epics]}")
         
