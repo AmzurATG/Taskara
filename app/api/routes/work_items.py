@@ -8,6 +8,8 @@ from app.api.deps import get_current_user, get_db
 from app.db.models.user import User
 from app.db.models.file import File
 from app.db.models.ai_job import AIJob, JobStatus
+from app.db.models.work_item import WorkItem, ItemType, ItemStatus
+from app.db.models.project import Project
 from app.schemas.work_item import (
     WorkItemResponse, 
     WorkItemCreate,
@@ -16,7 +18,6 @@ from app.schemas.work_item import (
     WorkItemStatsResponse
 )
 from app.services.work_item import WorkItemService
-from app.db.models.work_item import ItemType, ItemStatus
 
 router = APIRouter()
 
@@ -400,7 +401,6 @@ async def get_work_item_generation_stats(
                         if subtask_match: subtasks = int(subtask_match.group(1))
                     except:
                         # Fallback: count actual work items created after this job
-                        from app.db.models.work_item import WorkItem
                         work_items = db.query(WorkItem).filter(
                             WorkItem.project_id == project_id,
                             WorkItem.created_at >= latest_job.created_at
@@ -491,7 +491,6 @@ async def get_file_work_item_stats(
             }
         
         # Get work items created after this job
-        from app.db.models.work_item import WorkItem
         work_items = db.query(WorkItem).filter(
             WorkItem.project_id == project_id,
             WorkItem.created_at >= latest_job.created_at
@@ -528,4 +527,67 @@ async def get_file_work_item_stats(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve file stats: {str(e)}"
+        )
+
+
+@router.patch("/work-items/{work_item_id}/toggle-active")
+def toggle_work_item_active_status(
+    work_item_id: UUID,
+    active_status: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Toggle work item active status and cascade to all children."""
+    try:
+        active = active_status.get("active")
+        if active is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="'active' field is required"
+            )
+        
+        # Get the work item with permission check (simplified)
+        work_item = db.query(WorkItem).join(Project).filter(
+            WorkItem.id == work_item_id,
+            Project.owner_id == current_user.id
+        ).first()
+        
+        if not work_item:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Work item not found"
+            )
+        
+        # Update work item status
+        work_item.active = active
+        
+        # Simple cascade - get all children at once and update
+        # This is a simplified version without deep recursion
+        children = db.query(WorkItem).filter(WorkItem.parent_id == work_item_id).all()
+        for child in children:
+            child.active = active
+            
+            # Get grandchildren and update them too
+            grandchildren = db.query(WorkItem).filter(WorkItem.parent_id == child.id).all()
+            for grandchild in grandchildren:
+                grandchild.active = active
+        
+        db.commit()
+        db.refresh(work_item)
+        
+        # Return simple success response instead of complex schema
+        return {
+            "success": True,
+            "message": f"Work item {'activated' if active else 'deactivated'} successfully",
+            "work_item_id": str(work_item_id),
+            "active": active
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to toggle work item active status: {str(e)}"
         )

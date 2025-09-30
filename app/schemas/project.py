@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 class ProjectBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = Field(None, max_length=1000)
+    active: Optional[bool] = Field(True, description="Whether the project is active")
 
 
 class ProjectCreate(ProjectBase):
@@ -16,11 +17,13 @@ class ProjectCreate(ProjectBase):
 class ProjectUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     description: Optional[str] = Field(None, max_length=1000)
+    active: Optional[bool] = Field(None, description="Whether the project is active")
 
 
 class ProjectInDBBase(ProjectBase):
     id: UUID
     owner_id: UUID
+    active: bool
     created_at: datetime
     updated_at: datetime
 

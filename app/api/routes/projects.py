@@ -26,11 +26,12 @@ def create_project(
 def get_projects(
     skip: int = 0,
     limit: int = 100,
+    include_inactive: bool = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """Get all projects for the current user."""
-    return ProjectService.get_user_projects(db=db, user_id=current_user.id, skip=skip, limit=limit)
+    return ProjectService.get_user_projects(db=db, user_id=current_user.id, skip=skip, limit=limit, include_inactive=include_inactive)
 
 
 @router.get("/{project_id}", response_model=Project)
@@ -89,6 +90,8 @@ def view_project_details(
     return project_details
 
 
+
+
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_project(
     project_id: UUID,
@@ -101,4 +104,60 @@ def delete_project(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Project not found"
+        )
+
+
+@router.patch("/{project_id}/toggle-active")
+def toggle_project_active_status(
+    project_id: UUID,
+    active_status: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Toggle project active status."""
+    try:
+        active = active_status.get("active")
+        if active is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="'active' field is required"
+            )
+        
+        # Get the project with permission check
+        project = ProjectService.get_project(db=db, project_id=project_id, user_id=current_user.id)
+        if not project:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Project not found"
+            )
+        
+        # Update project status
+        project_update = ProjectUpdate(active=active)
+        updated_project = ProjectService.update_project(
+            db=db, 
+            project_id=project_id, 
+            project_update=project_update, 
+            user_id=current_user.id
+        )
+        
+        if not updated_project:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Project not found"
+            )
+        
+        # Return simple success response
+        return {
+            "success": True,
+            "message": f"Project {'activated' if active else 'deactivated'} successfully",
+            "project_id": str(project_id),
+            "active": active
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to toggle project active status: {str(e)}"
         )

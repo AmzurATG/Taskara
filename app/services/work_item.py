@@ -197,13 +197,18 @@ class WorkItemService:
         db: Session, 
         project_id: UUID, 
         user_id: UUID,
-        item_type: Optional[ItemType] = None
+        item_type: Optional[ItemType] = None,
+        include_inactive: bool = False
     ) -> List[WorkItem]:
-        """Get all work items for a project with source file information."""
+        """Get all work items for a project with source file information. By default, only returns active items."""
         from sqlalchemy.orm import joinedload
         
         try:
             query = db.query(WorkItem).options(joinedload(WorkItem.source_file)).filter(WorkItem.project_id == project_id)
+            
+            # Filter by active status unless explicitly including inactive items
+            if not include_inactive:
+                query = query.filter(WorkItem.active == True)
             
             if item_type:
                 query = query.filter(WorkItem.item_type == item_type)
@@ -215,6 +220,10 @@ class WorkItemService:
             from app.db.models.file import File
             
             query = db.query(WorkItem).filter(WorkItem.project_id == project_id)
+            
+            # Filter by active status unless explicitly including inactive items
+            if not include_inactive:
+                query = query.filter(WorkItem.active == True)
             
             if item_type:
                 query = query.filter(WorkItem.item_type == item_type)
@@ -692,3 +701,39 @@ class WorkItemService:
     def get_work_items_by_file(db: Session, file_id: UUID) -> List[WorkItem]:
         """Get all work items generated from a specific file."""
         return db.query(WorkItem).filter(WorkItem.source_file_id == file_id).order_by(WorkItem.order_index).all()
+    
+    @staticmethod
+    def toggle_work_item_active_status(db: Session, work_item_id: UUID, user_id: UUID, active: bool) -> Optional[WorkItem]:
+        """Toggle work item active status and cascade to all children."""
+        try:
+            # Get the work item with permission check
+            work_item = WorkItemService.get_work_item_by_id(db, work_item_id, user_id)
+            if not work_item:
+                return None
+            
+            # Update work item status
+            work_item.active = active
+            
+            # Cascade to all children recursively
+            WorkItemService._cascade_active_status_to_children(db, work_item_id, active)
+            
+            db.commit()
+            db.refresh(work_item)
+            return work_item
+            
+        except Exception as e:
+            db.rollback()
+            raise e
+    
+    @staticmethod
+    def _cascade_active_status_to_children(db: Session, parent_id: UUID, active: bool):
+        """Recursively cascade active status to all children."""
+        # Get all direct children
+        children = db.query(WorkItem).filter(WorkItem.parent_id == parent_id).all()
+        
+        for child in children:
+            # Update child status
+            child.active = active
+            
+            # Recursively update child's children
+            WorkItemService._cascade_active_status_to_children(db, child.id, active)

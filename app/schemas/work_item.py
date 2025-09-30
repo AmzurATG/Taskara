@@ -14,6 +14,7 @@ class WorkItemBase(BaseModel):
     acceptance_criteria: Optional[str] = None
     estimated_hours: Optional[int] = None  # Changed to int to match database model
     order_index: int = 0
+    active: Optional[bool] = Field(True, description="Whether the work item is active")
     source_file_id: Optional[UUID] = None
 
 
@@ -32,6 +33,7 @@ class WorkItemUpdate(BaseModel):
     acceptance_criteria: Optional[str] = None
     estimated_hours: Optional[int] = None  # Changed to int to match database model
     order_index: Optional[int] = None
+    active: Optional[bool] = Field(None, description="Whether the work item is active")
     parent_id: Optional[UUID] = None
     source_file_id: Optional[UUID] = None
 
@@ -43,9 +45,9 @@ class WorkItemResponse(WorkItemBase):
     source_file_id: Optional[UUID] = None
     source_file_name: Optional[str] = None  # Include file name for display
     status: ItemStatus
+    active: bool
     created_at: datetime
     updated_at: Optional[datetime] = None
-    source_file_name: Optional[str] = None  # Include file name for display
 
     class Config:
         from_attributes = True

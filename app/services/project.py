@@ -31,11 +31,14 @@ class ProjectService:
         return project
 
     @staticmethod
-    def get_user_projects(db: Session, user_id: UUID, skip: int = 0, limit: int = 100) -> List[Project]:
-        """Get all projects for a user with pagination."""
-        return db.query(Project).filter(
-            Project.owner_id == user_id
-        ).offset(skip).limit(limit).all()
+    def get_user_projects(db: Session, user_id: UUID, skip: int = 0, limit: int = 100, include_inactive: bool = False) -> List[Project]:
+        """Get all projects for a user with pagination. By default, only returns active projects."""
+        query = db.query(Project).filter(Project.owner_id == user_id)
+        
+        if not include_inactive:
+            query = query.filter(Project.active == True)
+            
+        return query.offset(skip).limit(limit).all()
 
     @staticmethod
     def get_project_view_details(db: Session, project_id: UUID, user_id: UUID) -> Optional[Dict[str, Any]]:
@@ -48,20 +51,22 @@ class ProjectService:
         # Import here to avoid circular imports
         from app.db.models.work_item import WorkItem, ItemType
         
-        # Get all epics for this project
+        # Get all active epics for this project
         epics = db.query(WorkItem).filter(
             WorkItem.project_id == project_id,
             WorkItem.item_type == ItemType.EPIC,
-            WorkItem.parent_id == None
+            WorkItem.parent_id == None,
+            WorkItem.active == True
         ).order_by(WorkItem.order_index, WorkItem.created_at).all()
         
         # Build epics data with counts
         epics_data = []
         for epic in epics:
-            # Count user stories under this epic
+            # Count active user stories under this epic
             user_stories_count = db.query(WorkItem).filter(
                 WorkItem.parent_id == epic.id,
-                WorkItem.item_type == ItemType.STORY
+                WorkItem.item_type == ItemType.STORY,
+                WorkItem.active == True
             ).count()
             
             epic_data = {
@@ -171,6 +176,32 @@ class ProjectService:
             db.rollback()
             print(f"Error deleting project {project_id}: {e}")
             return False
+
+    @staticmethod
+    def toggle_project_active_status(db: Session, project_id: UUID, user_id: UUID, active: bool) -> Optional[Project]:
+        """Toggle project active status and cascade to all work items."""
+        try:
+            # Get the project
+            project = ProjectService.get_project(db, project_id, user_id)
+            if not project:
+                return None
+            
+            # Update project status
+            project.active = active
+            
+            # Cascade to all work items in this project
+            from app.db.models.work_item import WorkItem
+            db.query(WorkItem).filter(
+                WorkItem.project_id == project_id
+            ).update({"active": active})
+            
+            db.commit()
+            db.refresh(project)
+            return project
+            
+        except Exception as e:
+            db.rollback()
+            raise e
 
     @staticmethod
     def verify_project_ownership(db: Session, project_id: UUID, user_id: UUID) -> bool:

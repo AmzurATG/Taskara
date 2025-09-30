@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String, DateTime, Text, ForeignKey, Integer, Enum
+from sqlalchemy import Column, String, DateTime, Text, ForeignKey, Integer, Enum, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -39,6 +39,7 @@ class WorkItem(Base):
     acceptance_criteria = Column(Text, nullable=True)  # JSON string of criteria list
     estimated_hours = Column(Integer, nullable=True)  # Changed from Float to Integer to match database
     order_index = Column(Integer, nullable=False, default=0)  # for sorting
+    active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
