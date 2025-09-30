@@ -108,3 +108,58 @@ def get_file_ai_job(
         )
     
     return AIJobResponse.from_orm(job)
+
+
+@router.post("/jobs/{job_id}/retry", response_model=AIJobResponse)
+def retry_ai_job(
+    job_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Retry a failed or queued AI job."""
+    job = AIJobService.get_job(db, job_id)
+    
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="AI job not found"
+        )
+    
+    # Verify project ownership through the job's project
+    if not ProjectService.verify_project_ownership(db, job.project_id, current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Access denied"
+        )
+    
+    try:
+        retried_job = AIJobService.retry_job(db, job_id)
+        return retried_job
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retry job: {str(e)}"
+        )
+
+
+@router.get("/{project_id}/failed-scheduling", response_model=List[AIJobResponse])
+def get_failed_scheduling_jobs(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get all jobs that failed to be scheduled (QUEUED with error_message)."""
+    # Verify project ownership
+    if not ProjectService.verify_project_ownership(db, project_id, current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found or access denied"
+        )
+    
+    # Get all failed scheduling jobs and filter by project
+    failed_jobs = AIJobService.get_failed_scheduling_jobs(db)
+    project_failed_jobs = [job for job in failed_jobs if job.project_id == project_id]
+    
+    return [AIJobResponse.from_orm(job) for job in project_failed_jobs]
