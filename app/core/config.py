@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     
     # AI Configuration
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
+    openrouter_api_key: str = os.getenv("OPENROUTER_API_KEY", "")
     openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
     
     # Celery Configuration  
