@@ -27,13 +27,14 @@ async def get_project_work_items(
     project_id: UUID,
     item_type: Optional[ItemType] = Query(None, description="Filter by item type"),
     parent_id: Optional[UUID] = Query(None, description="Filter by parent ID"),
+    include_inactive: bool = Query(False, description="Include inactive work items"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """Get all work items for a project."""
     try:
         work_items = WorkItemService.get_project_work_items(
-            db, project_id, current_user.id, item_type, parent_id
+            db, project_id, current_user.id, item_type, parent_id, include_inactive
         )
         
         # Convert to response model with source file information
@@ -51,6 +52,39 @@ async def get_project_work_items(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve work items: {str(e)}"
+        )
+
+
+@router.get("/projects/{project_id}/work-items/inactive", response_model=List[WorkItemResponse])
+async def get_inactive_work_items(
+    project_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get all inactive work items for a project."""
+    try:
+        work_items = WorkItemService.get_project_work_items(
+            db, project_id, current_user.id, include_inactive=True
+        )
+        
+        # Filter only inactive items
+        inactive_items = [item for item in work_items if not item.active]
+        
+        # Convert to response model with source file information
+        response_items = []
+        for item in inactive_items:
+            response_item = WorkItemResponse.from_orm(item)
+            # Add source file name if available
+            if hasattr(item, 'source_file') and item.source_file:
+                response_item.source_file_name = item.source_file.file_name
+            elif hasattr(item, 'source_file_name'):
+                response_item.source_file_name = item.source_file_name
+            response_items.append(response_item)
+        return response_items
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve inactive work items: {str(e)}"
         )
 
 

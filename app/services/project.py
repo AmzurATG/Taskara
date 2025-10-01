@@ -97,12 +97,19 @@ class ProjectService:
             WorkItem.item_type == ItemType.SUBTASK
         ).count()
         
+        # Get inactive work items count
+        inactive_items_count = db.query(WorkItem).filter(
+            WorkItem.project_id == project_id,
+            WorkItem.active == False
+        ).count()
+        
         work_items_summary = {
             "total_items": total_items,
             "epics_count": epics_count,
             "stories_count": stories_count,
             "tasks_count": tasks_count,
-            "subtasks_count": subtasks_count
+            "subtasks_count": subtasks_count,
+            "inactive_items_count": inactive_items_count
         }
         
         return {

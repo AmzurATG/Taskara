@@ -278,6 +278,7 @@ class WorkItemService:
                 "type": item.item_type.value,
                 "priority": item.priority.value,
                 "status": item.status.value,
+                "active": item.active,
                 "acceptance_criteria": json.loads(item.acceptance_criteria) if item.acceptance_criteria else [],
                 "estimated_hours": item.estimated_hours,
                 "order_index": item.order_index,

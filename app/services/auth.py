@@ -23,11 +23,8 @@ class AuthService:
                 detail="Email already registered"
             )
         
-        # Determine the role based on email and default logic
-        if user_data.email == "sireesha@malinator.com":
-            user_role = "admin"
-        else:
-            user_role = "user"  # Default role for all other users
+        # Use default role for all new registrations
+        user_role = "user"  # Default role for all user registrations
         
         # Create new user
         hashed_password = get_password_hash(user_data.password)
