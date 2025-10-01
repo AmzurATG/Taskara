@@ -198,6 +198,7 @@ class WorkItemService:
         project_id: UUID, 
         user_id: UUID,
         item_type: Optional[ItemType] = None,
+        parent_id: Optional[UUID] = None,
         include_inactive: bool = False
     ) -> List[WorkItem]:
         """Get all work items for a project with source file information. By default, only returns active items."""
@@ -213,6 +214,9 @@ class WorkItemService:
             if item_type:
                 query = query.filter(WorkItem.item_type == item_type)
             
+            if parent_id is not None:
+                query = query.filter(WorkItem.parent_id == parent_id)
+            
             return query.order_by(WorkItem.order_index, WorkItem.created_at).all()
         except Exception as e:
             # If there's an error with joinedload, fall back to basic query with manual loading
@@ -227,6 +231,9 @@ class WorkItemService:
             
             if item_type:
                 query = query.filter(WorkItem.item_type == item_type)
+                
+            if parent_id is not None:
+                query = query.filter(WorkItem.parent_id == parent_id)
             
             work_items = query.order_by(WorkItem.order_index, WorkItem.created_at).all()
             

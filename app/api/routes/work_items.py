@@ -26,13 +26,14 @@ router = APIRouter()
 async def get_project_work_items(
     project_id: UUID,
     item_type: Optional[ItemType] = Query(None, description="Filter by item type"),
+    parent_id: Optional[UUID] = Query(None, description="Filter by parent ID"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """Get all work items for a project."""
     try:
         work_items = WorkItemService.get_project_work_items(
-            db, project_id, current_user.id, item_type
+            db, project_id, current_user.id, item_type, parent_id
         )
         
         # Convert to response model with source file information
