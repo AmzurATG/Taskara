@@ -1,0 +1,14 @@
+{
+  "name": "Taskara",
+  "short_name": "Taskara",
+  "description": "A modern, production-ready task management application",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#181824",
+  "theme_color": "#a259ff",
+  "orientation": "portrait-primary",
+  "icons": [],
+  "categories": ["productivity", "business"],
+  "lang": "en",
+  "dir": "ltr"
+}

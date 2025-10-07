@@ -1,0 +1,201 @@
+/* Enhanced animations and transitions for better UX */
+
+/* Smooth hover transitions for cards */
+.project-card {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.project-card:hover {
+  transform: translateY(-4px) scale(1.02);
+}
+
+/* Enhanced switch animations */
+.MuiSwitch-root .MuiSwitch-switchBase {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.MuiSwitch-root .MuiSwitch-thumb {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.MuiSwitch-root:hover .MuiSwitch-thumb {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.MuiSwitch-root .MuiSwitch-track {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+/* Success switch styles */
+.MuiSwitch-colorSuccess.Mui-checked .MuiSwitch-switchBase {
+  color: #10b981 !important;
+}
+
+.MuiSwitch-colorSuccess.Mui-checked .MuiSwitch-track {
+  background-color: rgba(16, 185, 129, 0.6) !important;
+}
+
+.MuiSwitch-colorSuccess:hover.Mui-checked .MuiSwitch-track {
+  background-color: rgba(16, 185, 129, 0.8) !important;
+}
+
+/* Error switch styles */
+.MuiSwitch-colorError.Mui-checked .MuiSwitch-switchBase {
+  color: #ef4444 !important;
+}
+
+.MuiSwitch-colorError.Mui-checked .MuiSwitch-track {
+  background-color: rgba(239, 68, 68, 0.6) !important;
+}
+
+.MuiSwitch-colorError:hover.Mui-checked .MuiSwitch-track {
+  background-color: rgba(239, 68, 68, 0.8) !important;
+}
+
+/* Smooth loading spinner */
+@keyframes smoothSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.smooth-loading {
+  animation: smoothSpin 1s linear infinite;
+}
+
+/* Pulse animation for loading states */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+.pulse-loading {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+/* Enhanced modal backdrop */
+.modal-backdrop {
+  backdrop-filter: blur(8px) saturate(1.2);
+  transition: all 0.3s ease-out;
+}
+
+/* Smooth scroll for modal content */
+.modal-content {
+  scroll-behavior: smooth;
+}
+
+.modal-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.modal-content::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+}
+
+.modal-content::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 8px;
+  transition: background 0.3s ease;
+}
+
+.modal-content::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+/* Button hover enhancements */
+.MuiButton-root {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.MuiButton-root:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+}
+
+.MuiIconButton-root {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.MuiIconButton-root:hover {
+  transform: scale(1.1);
+}
+
+/* Card status indicator animations */
+.status-indicator {
+  position: relative;
+  overflow: hidden;
+}
+
+.status-indicator::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.3),
+    transparent
+  );
+  transition: left 0.5s ease;
+}
+
+.status-indicator:hover::after {
+  left: 100%;
+}
+
+/* Chip hover effects */
+.MuiChip-root {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.MuiChip-root:hover {
+  transform: scale(1.05);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+/* Enhanced focus states */
+.MuiSwitch-root:focus-within .MuiSwitch-thumb {
+  box-shadow: 0 0 0 8px rgba(162, 89, 255, 0.16);
+}
+
+/* Stagger animation utility */
+.stagger-item {
+  animation-fill-mode: both;
+  animation-duration: 0.6s;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.stagger-item:nth-child(1) { animation-delay: 0.05s; }
+.stagger-item:nth-child(2) { animation-delay: 0.1s; }
+.stagger-item:nth-child(3) { animation-delay: 0.15s; }
+.stagger-item:nth-child(4) { animation-delay: 0.2s; }
+.stagger-item:nth-child(5) { animation-delay: 0.25s; }
+.stagger-item:nth-child(6) { animation-delay: 0.3s; }
+
+/* Fade in animation */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-in-up {
+  animation: fadeInUp 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
